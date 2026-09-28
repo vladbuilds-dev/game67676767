@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Университет «Ремесло» — 67</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;width:100%;overflow:hidden;background:#000;
+    display:flex;align-items:center;justify-content:center;
+    touch-action:none;-webkit-user-select:none;user-select:none;
+    -webkit-tap-highlight-color:transparent;font-family:monospace;}
+  canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges;
+    touch-action:none;-webkit-user-select:none;user-select:none;
+    box-shadow:0 0 60px rgba(232,178,58,.25);}
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="540"></canvas>
+<script>
+(() => {
+"use strict";
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const W = 960, H = 540;
+let T = 0;
+const clamp = (v,a,b)=> v<a?a:(v>b?b:v);
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+function resize(){
+  const mW = window.innerWidth, mH = window.innerHeight;
+  const ratio = W / H;
+  let cw = mW, ch = mW / ratio;
+  if(ch > mH){ ch = mH; cw = mH * ratio; }
+  cv.style.width = Math.floor(cw) + 'px';
+  cv.style.height = Math.floor(ch) + 'px';
+}
+resize();
+addEventListener('resize', resize);
+addEventListener('orientationchange', ()=>setTimeout(resize, 100));
+
+/* ============ GRID WORLD: ФОРМА 67 ============ */
+const FONT_6 = ["01110","10001","10001","11110","10001","10001","01110"];
+const FONT_7 = ["11111","00001","00010","00100","01000","10000","10000"];
+const SCALE = 3, CELL = 60, GAP = 2;
+const DIGIT_W = 5 * SCALE;   // 15
+const DIGIT_H = 7 * SCALE;   // 21
+const GRID_W = DIGIT_W * 2 + GAP;  // 32
+const GRID_H = DIGIT_H;            // 21
+const WW = GRID_W * CELL;          // 1920
+const WH = GRID_H * CELL;          // 1260
+
+const walkable = [];
+const isCourtyard = [];
+for(let r=0;r<GRID_H;r++){
+  walkable.push(new Array(GRID_W).fill(false));
+  isCourtyard.push(new Array(GRID_W).fill(false));
+}
+
+function stamp(font, off){
+  for(let fr=0;fr<font.length;fr++){
+    for(let fc=0;fc<font[fr].length;fc++){
+      if(font[fr][fc] !== '1') continue;
+      for(let dr=0;dr<SCALE;dr++) for(let dc=0;dc<SCALE;dc++){
+        walkable[fr*SCALE+dr][off + fc*SCALE+dc] = true;
+      }
+    }
+  }
+}
+stamp(FONT_6, 0);
+stamp(FONT_7, DIGIT_W + GAP);
+
+// Дворы внутри петель «6» — проходимые
+for(let r=3;r<=8;r++)  for(let c=3;c<=11;c++){ walkable[r][c]=true; isCourtyard[r][c]=true; }
+for(let r=12;r<=17;r++)for(let c=3;c<=11;c++){ walkable[r][c]=true; isCourtyard[r][c]=true; }
+
+// Мост между «6» и «7» (средняя полка)
+for(let r=9;r<=11;r++) for(let c=12;c<=22;c++) walkable[r][c] = true;
+
+/* ============ COLLISION ============ */
+function isWalkPx(px, py){
+  const c = Math.floor(px / CELL), r = Math.floor(py / CELL);
+  if(r<0||r>=GRID_H||c<0||c>=GRID_W) return false;
+  return walkable[r][c];
+}
+const KAZAN = { x: 450, y: 330, r: 100 };
+const circles = [ KAZAN ];
+const stands = [
+  { x: 620, y: 450, r: 24 },
+  { x: 280, y: 900, r: 24 },
+  { x: 1500, y: 600, r: 24 },
+  { x: 1800, y: 180, r: 24 }
+];
+for(const s of stands) circles.push({ x:s.x, y:s.y, r:s.r });
+
+function boxFree(x, y){
+  const hw = 7, hh = 6;
+  if(!isWalkPx(x-hw,y-hh)) return false;
+  if(!isWalkPx(x+hw,y-hh)) return false;
+  if(!isWalkPx(x-hw,y+hh)) return false;
+  if(!isWalkPx(x+hw,y+hh)) return false;
+  for(const c of circles){
+    if(Math.hypot(x-c.x, y-c.y) < c.r + 10) return false;
+  }
+  return true;
+}
+
+/* ============ PICKUPS ============ */
+let seed = 67 * 6767;
+function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; }
+function cellC(r, c){ return { x: c*CELL + CELL/2, y: r*CELL + CELL/2 }; }
+
+const diamonds = [];
+let tries = 0;
+while(diamonds.length < 67 && tries < 60000){
+  tries++;
+  const r = Math.floor(rnd()*GRID_H), c = Math.floor(rnd()*GRID_W);
+  if(!walkable[r][c]) continue;
+  const p = cellC(r, c);
+  if(Math.hypot(p.x - KAZAN.x, p.y - KAZAN.y) < KAZAN.r + 45) continue;
+  if(diamonds.some(d=>Math.hypot(d.x-p.x, d.y-p.y) < 55)) continue;
+  diamonds.push({ x:p.x, y:p.y, taken:false, ph: rnd()*6.283 });
+}
+const churchelas = [];
+tries = 0;
+while(churchelas.length < 24 && tries < 60000){
+  tries++;
+  const r = Math.floor(rnd()*GRID_H), c = Math.floor(rnd()*GRID_W);
+  if(!walkable[r][c]) continue;
+  const p = cellC(r, c);
+  if(Math.hypot(p.x - KAZAN.x, p.y - KAZAN.y) < KAZAN.r + 45) continue;
+  if(diamonds.some(d=>Math.hypot(d.x-p.x, d.y-p.y) < 40)) continue;
+  if(churchelas.some(d=>Math.hypot(d.x-p.x, d.y-p.y) < 60)) continue;
+  churchelas.push({ x:p.x, y:p.y, taken:false, ph: rnd()*6.283 });
+}
+
+/* ============ NPC ============ */
+const npcs = [
+  { id:'rector', name:'РЕКТОР МИХАИЛ ЛИТВИН', x:450, y:150, c:{
+      skin:'#f0c090', robe:'#243b55', belt:'#e8b23a', pants:'#1a2634',
+      hat:'hair', hair:'#3a3a3a', glasses:true },
+    lines:[
+      'Добро пожаловать в «Ремесло», студент!',
+      'Само здание — цифра 67. Обойди его по коридорам.',
+      'Экзамен КАЖДЫЙ день. Каждому студенту — Мини Купер.',
+      'Собери 67 алмазов — и допуск к экзамену твой.'
+    ]},
+  { id:'ronaldo', name:'ФИЗРА — РОНАЛДО', x:150, y:900, c:{
+      skin:'#d9a06a', robe:'#f2f2f2', belt:'#2e86c1', pants:'#1a1a22',
+      hat:'band', hair:'#2b1b12' },
+    lines:[
+      'СИУУУ! Я — учитель физры.',
+      'Бегаем 67 кругов по букве «6». Потом по «7».',
+      'Кто не сдаст — чистит тандыр. Оба.',
+      'Алмазы не забудь, спортсмен!'
+    ]},
+  { id:'smile', name:'ЛИТЕРАТУРА — МИСТЕР СМАЙЛ', x:780, y:300, c:{
+      skin:'#ffe066', robe:'#7d3c98', belt:'#e8b23a', pants:'#2c1a3a',
+      hat:'top', hair:'#111' },
+    lines:[
+      'Привет-привет! Улыбнись! :)',
+      'Сегодня сочинение: «Образ плова в архитектуре 67».',
+      'Не менее 67 страниц. И улыбка на лице!',
+      'Чурчхелу не забудь — она вдохновляет.'
+    ]},
+  { id:'beast', name:'МИСТЕР БИСТ — СТЕКЛОВАТА', x:1500, y:600, c:{
+      skin:'#e0a878', robe:'#1f6feb', belt:'#0d47a1', pants:'#161616',
+      hat:'cap', hair:'#111' },
+    lines:[
+      'Я отвечаю за стекловату и шоколад.',
+      'Стекловатой утеплил всю шестёрку. И семёрку. И мост.',
+      'У меня всё в шоколаде. АБСОЛЮТНО всё.',
+      'Даже стены формы «67» — в шоколаде.'
+    ]},
+  { id:'brym', name:'БРЫМДЫЩ — ГЛАВНЫЙ БОСС', x:1080, y:1080, c:{
+      skin:'#c98a4b', robe:'#6c3483', belt:'#e8b23a', pants:'#241432',
+      hat:'crown', hair:'#111', big:true },
+    lines:[]},
+  { id:'t1', name:'УЧИТЕЛЬНИЦА', x:330, y:450, c:{
+      skin:'#f5cba7', robe:'#ff6fa5', belt:'#e8b23a', pants:'#3a1f2e',
+      hat:'hair', hair:'#4b2e1e' },
+    lines:[
+      'Приветик! Мы внутри «6»!',
+      'У меня силиконовые... БРАСЛЕТЫ! Целых 67 штук.',
+      'Внутри петли — двор с казаном. Иди посмотри.'
+    ]},
+  { id:'t2', name:'УЧИТЕЛЬНИЦА', x:600, y:450, c:{
+      skin:'#f5cba7', robe:'#9b59b6', belt:'#e8b23a', pants:'#2c1a3a',
+      hat:'hair', hair:'#e8b23a' },
+    lines:[
+      'Ой, новенький! Держи чурчхелу, она полезная.',
+      'Мост ведёт в «7». Там ПМИ.',
+      'Шучу. Всегда 67.'
+    ]},
+  { id:'t3', name:'УЧИТЕЛЬНИЦА', x:450, y:900, c:{
+      skin:'#f5cba7', robe:'#1abc9c', belt:'#e8b23a', pants:'#143a34',
+      hat:'hair', hair:'#2b1b12' },
+    lines:[
+      'Мой силикон... ой, браслет! 67-й по счёту.',
+      'Внутри нижней петли «6» — столовая.',
+      'Кстати, алмазы блестят ярче, если собрать все 67.'
+    ]},
+  { id:'t4', name:'УЧИТЕЛЬНИЦА', x:1650, y:390, c:{
+      skin:'#f5cba7', robe:'#e74c3c', belt:'#e8b23a', pants:'#3a1a1a',
+      hat:'hair', hair:'#111' },
+    lines:[
+      'Держи алмазик! Шучу, не держу. Ищи сам.',
+      'Ты идёшь по диагонали «7». Красиво, да?',
+      'Плов в казане — главный экспонат.'
+    ]}
+];
+
+/* ============ CARS / EXAM ============ */
+const cars = [
+  { x: 330, y: 1170, color:'#c0392b' },
+  { x: 630, y: 1170, color:'#2e86c1' }
+];
+const EXAM = { x: 1050, y: 630 };
+
+/* ============ STATE ============ */
+const player = { x: 330, y: 450, speed: 3.1, anim: 0, dir: 1 };
+const cam = { x: 0, y: 0 };
+let state = 'intro';
+let dlg = null;
+let gotD = 0, gotC = 0;
+let hasKey = false;
+
+/* ============ QUIZ ============ */
+const quizBase = [
+  { q:'67 + 0 = ?', a:['67','76','670'], c:0 },
+  { q:'Какую форму имеет здание «Ремесла»?', a:['67','Квадрат','Круг'], c:0 },
+  { q:'Что получает каждый студент каждый день?', a:['Мини Купер','Кирпич','Ничего'], c:0 },
+  { q:'Кто отвечает за стекловату и шоколад?', a:['Мистер Бист','Роналдо','Мистер Смайл'], c:0 },
+  { q:'Что варят в казане во дворе «6»?', a:['Плов','Стекловату','Бриллианты'], c:0 }
+];
+let quiz = [], qIndex = 0, qCorrect = 0, quizMsg = null, quizMsgT = 0;
+
+function startQuiz(){
+  quiz = quizBase.map(it=>{
+    const idx = it.a.map((t,i)=>({t,i}));
+    for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j],idx[i]]; }
+    return { q:it.q, a:idx.map(o=>o.t), c:idx.findIndex(o=>o.i===it.c) };
+  });
+  qIndex = 0; qCorrect = 0; quizMsg = null; quizMsgT = 0;
+  state = 'quiz';
+}
+function answerQuiz(p){
+  if(quizMsg) return;
+  const ok = p === quiz[qIndex].c;
+  if(ok) qCorrect++;
+  quizMsg = { ok, text: ok ? 'ВЕРНО! +67 очков уважения' : 'НЕВЕРНО... но экзамен всё равно каждый день' };
+  quizMsgT = 0.9;
+}
+function nextQuestion(){
+  quizMsg = null; qIndex++;
+  if(qIndex >= quiz.length){
+    if(qCorrect >= 4){
+      hasKey = true;
+      cars.push({ x: Math.round(player.x)+90, y: Math.round(player.y)+30, color:'#e8b23a' });
+      startDialogue({ name:'ЭКЗАМЕН СДАН!', lines:[
+        'Ты сдал экзамен! (' + qCorrect + '/5)',
+        'Держи ключи от Мини Купера. Каждому студенту — по Куперу!',
+        'Теперь найди БРЫМДЫЩА в нижней части «7».'
+      ]});
+    } else {
+      startDialogue({ name:'ЭКЗАМЕН ПРОВАЛЕН', lines:[
+        'Правильных: ' + qCorrect + '/5. Нужно минимум 4.',
+        'Не переживай — экзамен будет ЗАВТРА. И послезавтра.',
+        'Подойди к столу и попробуй снова.'
+      ]});
+    }
+  }
+}
+
+/* ============ DIALOGUE ============ */
+function startDialogue(npc){
+  dlg = { name:npc.name, lines:npc.lines.slice(), i:0, onEnd:npc.onEnd||null };
+  state = 'dialogue';
+}
+function advanceDialogue(){
+  if(!dlg) return;
+  dlg.i++;
+  if(dlg.i >= dlg.lines.length){
+    const cb = dlg.onEnd;
+    dlg = null; state = 'play';
+    if(cb) cb();
+  }
+}
+
+/* ============ INTERACT ============ */
+function interact(){
+  let best = null, bd = 1e9;
+  for(const n of npcs){
+    const d = Math.hypot(n.x-player.x, n.y-player.y);
+    if(d < 95 && d < bd){ bd = d; best = n; }
+  }
+  if(best){
+    if(best.id === 'brym'){
+      if(!hasKey){
+        startDialogue({ name:best.name, lines:[
+          'Я — БРЫМДЫЩ! Я привожу студентов!',
+          'Мне нужно: 67 алмазов и сданный экзамен.',
+          'У тебя алмазов: ' + gotD + '. Экзамен: ' + (hasKey?'сдан':'не сдан') + '.',
+          'Работай, студент. Я жду.'
+        ]});
+      } else {
+        startDialogue({ name:best.name, lines:[
+          'АЛМАЗЫ: ' + gotD + '/67. ЭКЗАМЕН: СДАН. КУПЕР: ЕСТЬ.',
+          'БРЫМДЫЩ ДОВОЛЕН.',
+          'Я привёл 67 студентов внутрь «6». И 67 — внутрь «7».',
+          'Добро пожаловать в Университет Мечты «РЕМЕСЛО»!'
+        ], onEnd: ()=>{ state = 'win'; } });
+      }
+      return;
+    }
+    startDialogue({ name:best.name, lines:best.lines });
+    return;
+  }
+  if(Math.hypot(EXAM.x-player.x, EXAM.y-player.y) < 130){
+    if(hasKey){
+      startDialogue({ name:'ЭКЗАМЕН 67', lines:['Ты уже сдал сегодня. Приходи завтра. И послезавтра. И...'] });
+    } else if(gotD < 67){
+      startDialogue({ name:'ЭКЗАМЕН 67', lines:[
+        'Экзамен каждый день, студент!',
+        'Но сначала собери 67 алмазов. У тебя: ' + gotD + '/67.',
+        'И чурчхелы возьми, у тебя ' + gotC + '.'
+      ]});
+    } else {
+      startQuiz();
+    }
+  }
+}
+
+/* ============ UPDATE ============ */
+const keys = {};
+function update(dt){
+  T += dt/60;
+  if(quizMsgT > 0){ quizMsgT -= dt/60; if(quizMsgT <= 0) nextQuestion(); }
+  if(state !== 'play') return;
+
+  let dx = 0, dy = 0;
+  if(keys['KeyA']||keys['ArrowLeft'])  dx -= 1;
+  if(keys['KeyD']||keys['ArrowRight']) dx += 1;
+  if(keys['KeyW']||keys['ArrowUp'])    dy -= 1;
+  if(keys['KeyS']||keys['ArrowDown'])  dy += 1;
+  if(touchJoy.active){
+    dx = touchJoy.dx; dy = touchJoy.dy;
+    if(Math.hypot(dx,dy) < 0.15){ dx = 0; dy = 0; }
+  }
+  if(dx && dy && (keys['KeyA']||keys['KeyD']||keys['KeyW']||keys['KeyS'])){
+    dx *= 0.7071; dy *= 0.7071;
+  }
+
+  const sp = player.speed * dt;
+  if(dx){
+    const nx = player.x + dx*sp;
+    if(boxFree(nx, player.y)) player.x = nx;
+    if(Math.abs(dx) > 0.1) player.dir = dx > 0 ? 1 : -1;
+  }
+  if(dy){
+    const ny = player.y + dy*sp;
+    if(boxFree(player.x, ny)) player.y = ny;
+  }
+  if(dx||dy) player.anim += dt*0.22;
+
+  cam.x = clamp(player.x - W/2, 0, WW - W);
+  cam.y = clamp(player.y - H/2, 0, WH - H);
+
+  for(const d of diamonds){
+    if(!d.taken && Math.hypot(d.x-player.x, d.y-(player.y-8)) < 28){ d.taken = true; gotD++; }
+  }
+  for(const ch of churchelas){
+    if(!ch.taken && Math.hypot(ch.x-player.x, ch.y-(player.y-8)) < 28){ ch.taken = true; gotC++; }
+  }
+}
+
+/* ============ INPUT ============ */
+addEventListener('keydown', e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  if(!keys[e.code]) onPress(e.code);
+  keys[e.code] = true;
+});
+addEventListener('keyup', e=>{ keys[e.code] = false; });
+
+function onPress(code){
+  if(state === 'intro'){ if(code==='Space'||code==='Enter') state='play'; return; }
+  if(state === 'dialogue'){ if(code==='KeyE'||code==='Space'||code==='Enter') advanceDialogue(); return; }
+  if(state === 'quiz'){
+    if(quizMsg) return;
+    if(code==='Digit1'||code==='Numpad1') answerQuiz(0);
+    if(code==='Digit2'||code==='Numpad2') answerQuiz(1);
+    if(code==='Digit3'||code==='Numpad3') answerQuiz(2);
+    return;
+  }
+  if(state === 'win'){ if(code==='KeyR') location.reload(); return; }
+  if(state === 'play'){ if(code === 'KeyE') interact(); }
+}
+
+/* ============ TOUCH ============ */
+const touchJoy = { active:false, id:null, baseX:0, baseY:0, dx:0, dy:0 };
+const touchBtn = { active:false, id:null };
+
+function tToC(t){
+  const rect = cv.getBoundingClientRect();
+  return { x:(t.clientX-rect.left)*(W/rect.width), y:(t.clientY-rect.top)*(H/rect.height) };
+}
+cv.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const p = tToC(t);
+    if(state === 'intro'){ onPress('Space'); continue; }
+    if(state === 'dialogue'){ onPress('Space'); continue; }
+    if(state === 'win'){ onPress('KeyR'); continue; }
+    if(state === 'quiz'){
+      if(quizMsg) continue;
+      for(let i=0;i<3;i++){
+        const bx = W/2 - 320, by = 195 + i*76;
+        if(p.x >= bx && p.x <= bx+640 && p.y >= by && p.y <= by+58){
+          onPress('Digit'+(i+1)); break;
+        }
+      }
+      continue;
+    }
+    if(state === 'play'){
+      if(p.x < W/2 && p.y > H-260){
+        if(!touchJoy.active){
+          touchJoy.active = true; touchJoy.id = t.identifier;
+          touchJoy.baseX = p.x; touchJoy.baseY = p.y;
+          touchJoy.dx = 0; touchJoy.dy = 0;
+        }
+        continue;
+      }
+      if(p.x > W-260 && p.y > H-260){
+        if(!touchBtn.active){
+          touchBtn.active = true; touchBtn.id = t.identifier;
+          onPress('KeyE');
+        }
+        continue;
+      }
+    }
+  }
+}, {passive:false});
+cv.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier === touchJoy.id && touchJoy.active){
+      const p = tToC(t);
+      let dx = p.x - touchJoy.baseX, dy = p.y - touchJoy.baseY;
+      const d = Math.hypot(dx, dy), maxD = 55;
+      if(d > maxD){ dx *= maxD/d; dy *= maxD/d; }
+      touchJoy.dx = dx / maxD; touchJoy.dy = dy / maxD;
+    }
+  }
+}, {passive:false});
+function endTouch(e){
+  for(const t of e.changedTouches){
+    if(t.identifier === touchJoy.id){ touchJoy.active=false; touchJoy.id=null; touchJoy.dx=0; touchJoy.dy=0; }
+    if(t.identifier === touchBtn.id){ touchBtn.active=false; touchBtn.id=null; }
+  }
+}
+cv.addEventListener('touchend', endTouch, {passive:false});
+cv.addEventListener('touchcancel', endTouch, {passive:false});
+
+/* ============ DRAW HELPERS ============ */
+function drawDiamondShape(x,y,s,ph){
+  const glow = 0.5 + 0.5*Math.sin(T*3 + ph);
+  ctx.save();
+  ctx.globalAlpha = 0.22 * glow;
+  ctx.fillStyle = '#7ff0ff';
+  ctx.beginPath(); ctx.arc(x,y,s*2.1,0,7); ctx.fill();
+  ctx.restore();
+  const g = ctx.createLinearGradient(x-s,y-s,x+s,y+s);
+  g.addColorStop(0,'#eafcff'); g.addColorStop(0.5,'#5fd8f0'); g.addColorStop(1,'#1f8fb5');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x, y-s*1.25); ctx.lineTo(x+s, y-s*0.3);
+  ctx.lineTo(x, y+s*1.25); ctx.lineTo(x-s, y-s*0.3);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x-s, y-s*0.3); ctx.lineTo(x+s, y-s*0.3);
+  ctx.moveTo(x, y-s*1.25);  ctx.lineTo(x, y+s*1.25);
+  ctx.stroke();
+}
+function drawChurchelaItem(x,y,ph){
+  const bob = Math.sin(T*2 + ph)*3; y += bob;
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(x, y+18, 10, 4, 0, 0, 7); ctx.fill();
+  const beads = [[0,-15],[4,-9],[-3,-3],[3,3],[-2,9],[1,14]];
+  ctx.strokeStyle = '#6b4a2a'; ctx.lineWidth = 1.5;
+  for(let i=0;i<beads.length-1;i++){
+    ctx.beginPath();
+    ctx.moveTo(x+beads[i][0], y+beads[i][1]);
+    ctx.lineTo(x+beads[i+1][0], y+beads[i+1][1]);
+    ctx.stroke();
+  }
+  for(let i=0;i<beads.length;i++){
+    const b = beads[i];
+    ctx.fillStyle = i%2 ? '#8a5a2b' : '#6d431d';
+    ctx.beginPath(); ctx.arc(x+b[0], y+b[1], 4.2, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,220,160,0.55)';
+    ctx.beginPath(); ctx.arc(x+b[0]-1.2, y+b[1]-1.2, 1.5, 0, 7); ctx.fill();
+  }
+}
+function drawPerson(x,y,c,walkAnim){
+  x = Math.round(x); y = Math.round(y);
+  const bob = walkAnim ? Math.round(Math.sin(walkAnim)*1.5) : 0;
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.ellipse(x, y, 14, 5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = c.pants || '#2a2a35';
+  ctx.fillRect(x-7, y-13, 6, 13); ctx.fillRect(x+1, y-13, 6, 13);
+  ctx.fillStyle = '#14141c';
+  ctx.fillRect(x-8, y-4, 7, 4); ctx.fillRect(x+1, y-4, 7, 4);
+  ctx.fillStyle = c.robe;
+  ctx.fillRect(x-10, y-34+bob, 20, 22);
+  ctx.fillStyle = c.belt || '#8a2b2b';
+  ctx.fillRect(x-10, y-19+bob, 20, 4);
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(x-3, y-32+bob, 2, 10); ctx.fillRect(x+1, y-32+bob, 2, 10);
+  ctx.fillStyle = c.robe;
+  ctx.fillRect(x-14, y-33+bob, 5, 17); ctx.fillRect(x+9, y-33+bob, 5, 17);
+  ctx.fillStyle = c.skin;
+  ctx.fillRect(x-14, y-17+bob, 5, 5); ctx.fillRect(x+9, y-17+bob, 5, 5);
+  ctx.fillRect(x-3, y-38+bob, 6, 5); ctx.fillRect(x-8, y-52+bob, 16, 15);
+  if(c.hat === 'tube'){
+    ctx.fillStyle = c.hatColor || '#1a3a6b';
+    ctx.fillRect(x-9, y-56+bob, 18, 6); ctx.fillRect(x-9, y-50+bob, 18, 4);
+    ctx.fillStyle = '#e8b23a';
+    ctx.fillRect(x-4, y-54+bob, 2, 2); ctx.fillRect(x+2, y-54+bob, 2, 2);
+    ctx.fillRect(x-1, y-52+bob, 2, 2);
+  } else if(c.hat === 'crown'){
+    ctx.fillStyle = '#e8b23a';
+    ctx.beginPath();
+    ctx.moveTo(x-11, y-52+bob); ctx.lineTo(x-11, y-64+bob);
+    ctx.lineTo(x-5, y-57+bob); ctx.lineTo(x, y-67+bob);
+    ctx.lineTo(x+5, y-57+bob); ctx.lineTo(x+11, y-64+bob);
+    ctx.lineTo(x+11, y-52+bob);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#e74c3c'; ctx.fillRect(x-2, y-58+bob, 4, 4);
+  } else if(c.hat === 'cap'){
+    ctx.fillStyle = '#111'; ctx.fillRect(x-9, y-56+bob, 18, 6);
+    ctx.fillStyle = '#0d47a1'; ctx.fillRect(x-10, y-51+bob, 22, 4);
+  } else if(c.hat === 'band'){
+    ctx.fillStyle = '#e8b23a'; ctx.fillRect(x-9, y-50+bob, 18, 4);
+    ctx.fillStyle = c.hair || '#222'; ctx.fillRect(x-9, y-56+bob, 18, 7);
+  } else if(c.hat === 'top'){
+    ctx.fillStyle = '#111';
+    ctx.fillRect(x-11, y-70+bob, 22, 5); ctx.fillRect(x-8, y-65+bob, 16, 12);
+  } else {
+    ctx.fillStyle = c.hair || '#222';
+    ctx.fillRect(x-9, y-57+bob, 18, 8);
+    ctx.fillRect(x-9, y-50+bob, 4, 7); ctx.fillRect(x+5, y-50+bob, 4, 7);
+  }
+  ctx.fillStyle = '#101018';
+  ctx.fillRect(x-5, y-46+bob, 3, 3); ctx.fillRect(x+2, y-46+bob, 3, 3);
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillRect(x-5, y-46+bob, 1, 1); ctx.fillRect(x+2, y-46+bob, 1, 1);
+  if(c.hat === 'top'){
+    ctx.fillStyle = '#7a1f1f';
+    ctx.fillRect(x-5, y-40+bob, 10, 3);
+    ctx.fillRect(x-6, y-41+bob, 2, 2); ctx.fillRect(x+4, y-41+bob, 2, 2);
+  } else {
+    ctx.fillStyle = '#8a3b3b'; ctx.fillRect(x-3, y-40+bob, 6, 2);
+  }
+  if(c.glasses){
+    ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x-7, y-47+bob, 6, 5); ctx.strokeRect(x+1, y-47+bob, 6, 5);
+    ctx.beginPath(); ctx.moveTo(x-1, y-45+bob); ctx.lineTo(x+1, y-45+bob); ctx.stroke();
+  }
+}
+
+/* ============ WORLD RENDER ============ */
+function drawWorldTiles(){
+  const c0 = Math.max(0, Math.floor(cam.x/CELL) - 1);
+  const c1 = Math.min(GRID_W-1, Math.ceil((cam.x+W)/CELL) + 1);
+  const r0 = Math.max(0, Math.floor(cam.y/CELL) - 1);
+  const r1 = Math.min(GRID_H-1, Math.ceil((cam.y+H)/CELL) + 1);
+
+  for(let r=r0;r<=r1;r++){
+    for(let c=c0;c<=c1;c++){
+      const x = c*CELL, y = r*CELL;
+
+      if(walkable[r][c]){
+        // Пол
+        const court = isCourtyard[r][c];
+        const alt = (r+c)%2 === 0;
+        if(court){
+          ctx.fillStyle = alt ? '#3a2418' : '#331f14';
+        } else {
+          ctx.fillStyle = alt ? '#0f4152' : '#0c3846';
+        }
+        ctx.fillRect(x, y, CELL, CELL);
+
+        // Узор
+        ctx.fillStyle = court ? 'rgba(232,178,58,0.13)' : 'rgba(95,216,240,0.10)';
+        ctx.beginPath();
+        ctx.moveTo(x+CELL/2, y+10);
+        ctx.lineTo(x+CELL-10, y+CELL/2);
+        ctx.lineTo(x+CELL/2, y+CELL-10);
+        ctx.lineTo(x+10, y+CELL/2);
+        ctx.closePath(); ctx.fill();
+
+        // Золотые точки по углам
+        ctx.fillStyle = court ? 'rgba(232,178,58,0.5)' : 'rgba(232,178,58,0.25)';
+        ctx.fillRect(x+4, y+4, 3, 3);
+        ctx.fillRect(x+CELL-7, y+4, 3, 3);
+        ctx.fillRect(x+4, y+CELL-7, 3, 3);
+        ctx.fillRect(x+CELL-7, y+CELL-7, 3, 3);
+
+        // Рамка вокруг ячейки — тонкая
+        ctx.strokeStyle = court ? 'rgba(232,178,58,0.12)' : 'rgba(95,216,240,0.06)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x+0.5, y+0.5, CELL-1, CELL-1);
+
+      } else {
+        // Стена или пустота
+        let isWall = false;
+        if(r>0 && walkable[r-1][c]) isWall = true;
+        if(r<GRID_H-1 && walkable[r+1][c]) isWall = true;
+        if(c>0 && walkable[r][c-1]) isWall = true;
+        if(c<GRID_W-1 && walkable[r][c+1]) isWall = true;
+
+        if(isWall){
+          // Стена
+          ctx.fillStyle = '#061820';
+          ctx.fillRect(x, y, CELL, CELL);
+          // Кирпичная текстура
+          ctx.fillStyle = 'rgba(255,255,255,0.025)';
+          ctx.fillRect(x, y, CELL, 2);
+          ctx.fillRect(x+2, y+CELL/2, CELL-4, 2);
+
+          // Золотая кромка на сторонах, обращённых к полу
+          const TT = 5;
+          ctx.fillStyle = '#e8b23a';
+          if(r>0 && walkable[r-1][c]) ctx.fillRect(x, y, CELL, TT);
+          if(r<GRID_H-1 && walkable[r+1][c]) ctx.fillRect(x, y+CELL-TT, CELL, TT);
+          if(c>0 && walkable[r][c-1]) ctx.fillRect(x, y, TT, CELL);
+          if(c<GRID_W-1 && walkable[r][c+1]) ctx.fillRect(x+CELL-TT, y, TT, CELL);
+
+          // Внутренний блик
+          ctx.fillStyle = 'rgba(232,178,58,0.15)';
+          if(r>0 && walkable[r-1][c]) ctx.fillRect(x, y+TT, CELL, 3);
+          if(c>0 && walkable[r][c-1]) ctx.fillRect(x+TT, y, 3, CELL);
+        } else {
+          // Пустота (внешняя)
+          ctx.fillStyle = '#020a10';
+          ctx.fillRect(x, y, CELL, CELL);
+        }
+      }
+    }
+  }
+}
+
+/* --- плов в казане --- */
+const plovDots = [];
+for(let i=0;i<150;i++){
+  const a = rnd()*Math.PI*2, r = Math.sqrt(rnd());
+  const rr = rnd();
+  plovDots.push({
+    x: Math.cos(a)*80*r, y: Math.sin(a)*24*r,
+    c: rr < 0.45 ? '#d97b2a' : (rr < 0.7 ? '#8a4a1e' : '#f7e9b8')
+  });
+}
+
+function drawKazan(){
+  const cx = KAZAN.x, cy = KAZAN.y;
+  const g = ctx.createRadialGradient(cx, cy, 20, cx, cy, 220);
+  g.addColorStop(0, 'rgba(255,160,60,0.22)');
+  g.addColorStop(1, 'rgba(255,160,60,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, 220, 0, 7); ctx.fill();
+
+  ctx.fillStyle = '#2b2b33';
+  ctx.fillRect(cx-72, cy+56, 22, 34); ctx.fillRect(cx+50, cy+56, 22, 34);
+  ctx.fillStyle = '#1a1a20';
+  ctx.beginPath(); ctx.ellipse(cx, cy+92, 100, 15, 0, 0, 7); ctx.fill();
+
+  ctx.fillStyle = '#17171c';
+  ctx.beginPath();
+  ctx.moveTo(cx-92, cy-42);
+  ctx.quadraticCurveTo(cx-100, cy+52, cx-54, cy+72);
+  ctx.lineTo(cx+54, cy+72);
+  ctx.quadraticCurveTo(cx+100, cy+52, cx+92, cy-42);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(cx-72, cy-28, 8, 74); ctx.fillRect(cx+58, cy-28, 5, 64);
+
+  ctx.fillStyle = '#e8b23a';
+  ctx.beginPath(); ctx.ellipse(cx, cy-42, 94, 30, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#9c6f1f';
+  ctx.beginPath(); ctx.ellipse(cx, cy-40, 86, 25, 0, 0, 7); ctx.fill();
+
+  ctx.fillStyle = '#e8c470';
+  ctx.beginPath(); ctx.ellipse(cx, cy-42, 82, 23, 0, 0, 7); ctx.fill();
+  for(const d of plovDots){
+    ctx.fillStyle = d.c;
+    ctx.fillRect(cx + d.x - 3, cy - 42 + d.y - 2, 6, 4);
+  }
+
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 24px monospace';
+  ctx.fillStyle = 'rgba(232,178,58,0.85)';
+  ctx.fillText('67', cx, cy + 36);
+
+  for(let i=0;i<12;i++){
+    const p = (T*0.32 + i*0.083) % 1;
+    const y = cy - 52 - p*140;
+    const x = cx + Math.sin(T*1.4 + i*2.1) * 32 * (0.4 + p);
+    const r = 10 + p*26;
+    ctx.globalAlpha = (1-p) * 0.20;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  for(let i=0;i<7;i++){
+    const a = -1.1 + i*0.37;
+    const bx = cx + Math.cos(a)*96;
+    const by = cy - 42 + Math.sin(a)*30;
+    ctx.strokeStyle = '#5c3f22'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx, by+24); ctx.stroke();
+    for(let j=0;j<4;j++){
+      ctx.fillStyle = j%2 ? '#8a5a2b' : '#6d431d';
+      ctx.beginPath(); ctx.arc(bx, by+7+j*6, 4, 0, 7); ctx.fill();
+    }
+  }
+}
+
+function drawStands(){
+  for(const s of stands){
+    const x = s.x - 35, y = s.y - 25;
+    ctx.fillStyle = '#5c3f22';
+    ctx.fillRect(x, y+28, 70, 22);
+    ctx.fillStyle = '#7a5430';
+    ctx.fillRect(x, y+26, 70, 6);
+    ctx.fillStyle = '#3d2a16';
+    ctx.fillRect(x+4, y+50, 8, 12); ctx.fillRect(x+58, y+50, 8, 12);
+    ctx.fillStyle = '#8a2b2b';
+    ctx.fillRect(x-6, y-14, 82, 8);
+    ctx.fillStyle = '#e8b23a';
+    for(let i=0;i<6;i++) ctx.fillRect(x-6+i*14, y-6, 7, 5);
+    for(let i=0;i<3;i++){
+      const bx = x + 14 + i*21;
+      ctx.strokeStyle = '#5c3f22'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(bx, y-8); ctx.lineTo(bx, y+22); ctx.stroke();
+      for(let j=0;j<5;j++){
+        ctx.fillStyle = j%2 ? '#8a5a2b' : '#6d431d';
+        ctx.beginPath(); ctx.arc(bx, y-4+j*6.5, 4.5, 0, 7); ctx.fill();
+        ctx.fillStyle = 'rgba(255,220,160,0.4)';
+        ctx.beginPath(); ctx.arc(bx-1.3, y-5.3+j*6.5, 1.6, 0, 7); ctx.fill();
+      }
+    }
+    drawDiamondShape(x+58, y+16, 7, x);
+  }
+}
+
+function drawMiniCooper(cx, cy, color, scale){
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(scale, scale);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(0, 22, 58, 10, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = color;
+  ctx.fillRect(-58, -18, 116, 36); ctx.fillRect(-40, -34, 76, 20);
+  ctx.fillStyle = '#f2f2f2'; ctx.fillRect(-38, -36, 72, 8);
+  ctx.fillStyle = '#7fd8f0';
+  ctx.fillRect(-34, -32, 30, 14); ctx.fillRect(2, -32, 30, 14);
+  ctx.fillStyle = '#fff2a8';
+  ctx.fillRect(52, -10, 8, 9); ctx.fillRect(-60, -10, 8, 9);
+  ctx.fillStyle = '#111'; ctx.fillRect(-14, 2, 28, 12);
+  ctx.fillStyle = '#e8b23a';
+  ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('67', 0, 12);
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(-32, 20, 13, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(32, 20, 13, 0, 7); ctx.fill();
+  ctx.fillStyle = '#888';
+  ctx.beginPath(); ctx.arc(-32, 20, 6, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(32, 20, 6, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function drawExamDesk(){
+  const x = EXAM.x - 50, y = EXAM.y - 10;
+  ctx.fillStyle = '#5c3f22';
+  ctx.fillRect(x, y+18, 100, 28);
+  ctx.fillStyle = '#7a5430'; ctx.fillRect(x, y+14, 100, 8);
+  ctx.fillStyle = '#3d2a16';
+  ctx.fillRect(x+6, y+46, 10, 10); ctx.fillRect(x+84, y+46, 10, 10);
+  ctx.fillStyle = '#f2f2e8';
+  ctx.fillRect(x+14, y+2, 22, 14); ctx.fillRect(x+42, y+4, 22, 14);
+  ctx.fillStyle = '#c0392b';
+  ctx.fillRect(x+18, y+7, 10, 2); ctx.fillRect(x+46, y+9, 10, 2);
+  ctx.fillStyle = '#08222c';
+  ctx.fillRect(x+6, y-32, 88, 32);
+  ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 3;
+  ctx.strokeRect(x+6, y-32, 88, 32);
+  ctx.textAlign = 'center'; ctx.font = 'bold 14px monospace';
+  ctx.fillStyle = '#e8b23a'; ctx.fillText('ЭКЗАМЕН', x+50, y-14);
+  ctx.fillStyle = '#5fd8f0'; ctx.font = 'bold 11px monospace';
+  ctx.fillText('КАЖДЫЙ ДЕНЬ', x+50, y-2);
+}
+
+function drawEntities(){
+  const list = [];
+  for(const c of cars) list.push({ y:c.y, draw: ()=> drawMiniCooper(c.x, c.y, c.color, 0.55) });
+  for(const n of npcs) list.push({ y:n.y, draw:()=>{
+    if(n.c.big){
+      ctx.save(); ctx.translate(n.x, n.y); ctx.scale(1.35, 1.35);
+      ctx.translate(-n.x, -n.y);
+      drawPerson(n.x, n.y, n.c, 0); ctx.restore();
+    } else drawPerson(n.x, n.y, n.c, 0);
+    ctx.textAlign = 'center'; ctx.font = 'bold 11px monospace';
+    const tw = ctx.measureText(n.name).width;
+    ctx.fillStyle = 'rgba(4,20,27,0.75)';
+    ctx.fillRect(n.x - tw/2 - 6, n.y - 84, tw + 12, 16);
+    ctx.fillStyle = '#e8b23a';
+    ctx.fillText(n.name, n.x, n.y - 72);
+  }});
+  list.push({ y:player.y, draw:()=>{
+    drawPerson(player.x, player.y, {
+      skin:'#f0c090', robe:'#e8b23a', belt:'#8a2b2b',
+      pants:'#243b55', hat:'tube', hatColor:'#1a3a6b'
+    }, player.anim);
+    ctx.textAlign = 'center'; ctx.font = 'bold 10px monospace';
+    ctx.fillStyle = 'rgba(95,216,240,0.9)';
+    ctx.fillText('ТЫ', player.x, player.y - 62);
+  }});
+  list.sort((a,b)=> a.y - b.y);
+  for(const it of list) it.draw();
+}
+
+function drawPickups(){
+  for(const d of diamonds){
+    if(d.taken) continue;
+    if(d.x < cam.x-40 || d.x > cam.x+W+40 || d.y < cam.y-40 || d.y > cam.y+H+40) continue;
+    const bob = Math.sin(T*2.5 + d.ph)*3;
+    drawDiamondShape(d.x, d.y + bob, 9, d.ph);
+  }
+  for(const ch of churchelas){
+    if(ch.taken) continue;
+    if(ch.x < cam.x-40 || ch.x > cam.x+W+40 || ch.y < cam.y-40 || ch.y > cam.y+H+40) continue;
+    drawChurchelaItem(ch.x, ch.y, ch.ph);
+  }
+}
+
+/* ============ MINIMAP ============ */
+function drawMinimap(){
+  const mw = 180, mh = 118;
+  const mx = W - mw - 12, my = 12;
+  ctx.fillStyle = 'rgba(4,20,27,0.9)';
+  ctx.fillRect(mx, my, mw, mh);
+  ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 2;
+  ctx.strokeRect(mx, my, mw, mh);
+
+  const sx = mw / GRID_W, sy = mh / GRID_H;
+  for(let r=0;r<GRID_H;r++){
+    for(let c=0;c<GRID_W;c++){
+      if(!walkable[r][c]) continue;
+      ctx.fillStyle = isCourtyard[r][c] ? '#e8b23a' : '#5fd8f0';
+      ctx.fillRect(mx + c*sx, my + r*sy, sx, sy);
+    }
+  }
+
+  // NPC
+  ctx.fillStyle = '#e74c3c';
+  for(const n of npcs){
+    ctx.fillRect(mx + (n.x/WW)*mw - 1.5, my + (n.y/WH)*mh - 1.5, 3, 3);
+  }
+  // Казан
+  ctx.fillStyle = '#fff2a8';
+  ctx.fillRect(mx + (KAZAN.x/WW)*mw - 2, my + (KAZAN.y/WH)*mh - 2, 4, 4);
+  // Игрок
+  const px = mx + (player.x/WW)*mw, py = my + (player.y/WH)*mh;
+  ctx.fillStyle = '#4ade80';
+  ctx.fillRect(px-2.5, py-2.5, 5, 5);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+  ctx.strokeRect(px-2.5, py-2.5, 5, 5);
+}
+
+/* ============ UI ============ */
+function wrapText(text, x, y, maxW, lh){
+  const words = text.split(' ');
+  let line = '', yy = y;
+  for(const w of words){
+    const test = line ? line + ' ' + w : w;
+    if(ctx.measureText(test).width > maxW && line){
+      ctx.fillText(line, x, yy); line = w; yy += lh;
+    } else line = test;
+  }
+  ctx.fillText(line, x, yy);
+}
+
+function drawHUD(){
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(4,20,27,0.85)';
+  ctx.fillRect(12, 12, 270, 76);
+  ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 2;
+  ctx.strokeRect(12, 12, 270, 76);
+  ctx.font = 'bold 16px monospace';
+  ctx.fillStyle = '#7ff0ff';
+  ctx.fillText('АЛМАЗЫ:  ' + gotD + ' / 67', 26, 38);
+  ctx.fillStyle = '#c98a4b';
+  ctx.fillText('ЧУРЧХЕЛА: ' + gotC, 26, 60);
+  ctx.font = 'bold 11px monospace';
+  ctx.fillStyle = hasKey ? '#4ade80' : '#666';
+  ctx.fillText(hasKey ? 'КУПЕР: ПОЛУЧЕН ✔' : 'КУПЕР: НЕ ПОЛУЧЕН', 26, 78);
+
+  if(!isTouch){
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillStyle = 'rgba(232,178,58,0.75)';
+    ctx.fillText('WASD — идти · E — говорить · Здание «67» — обойди по коридорам', W/2, H-14);
+  }
+
+  if(state === 'play'){
+    let near = null;
+    for(const n of npcs) if(Math.hypot(n.x-player.x, n.y-player.y) < 95) near = n;
+    if(!near && Math.hypot(EXAM.x-player.x, EXAM.y-player.y) < 130) near = { name:'ЭКЗАМЕН' };
+    if(near){
+      ctx.font = 'bold 14px monospace';
+      const txt = (isTouch ? 'НАЖМИ КНОПКУ E · ' : 'E — ') +
+                  (near.name === 'ЭКЗАМЕН' ? 'сдать экзамен' : 'поговорить');
+      const tw = ctx.measureText(txt).width;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(4,20,27,0.9)';
+      ctx.fillRect(W/2 - tw/2 - 14, H-72, tw + 28, 28);
+      ctx.strokeStyle = '#5fd8f0'; ctx.lineWidth = 2;
+      ctx.strokeRect(W/2 - tw/2 - 14, H-72, tw + 28, 28);
+      ctx.fillStyle = '#5fd8f0';
+      ctx.fillText(txt, W/2, H-52);
+    }
+  }
+}
+
+function drawMobileControls(){
+  if(!isTouch) return;
+  if(state !== 'play') return;
+  ctx.fillStyle = 'rgba(232,178,58,0.10)';
+  ctx.beginPath(); ctx.arc(110, H-110, 68, 0, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(232,178,58,0.65)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(110, H-110, 68, 0, 7); ctx.stroke();
+  const kx = 110 + (touchJoy.active ? touchJoy.dx*55 : 0);
+  const ky = H-110 + (touchJoy.active ? touchJoy.dy*55 : 0);
+  ctx.fillStyle = 'rgba(232,178,58,0.45)';
+  ctx.beginPath(); ctx.arc(kx, ky, 26, 0, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(232,178,58,0.9)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(kx, ky, 26, 0, 7); ctx.stroke();
+  ctx.fillStyle = touchBtn.active ? 'rgba(95,216,240,0.35)' : 'rgba(95,216,240,0.15)';
+  ctx.beginPath(); ctx.arc(W-110, H-110, 52, 0, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(95,216,240,0.75)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(W-110, H-110, 52, 0, 7); ctx.stroke();
+  ctx.fillStyle = '#5fd8f0'; ctx.font = 'bold 26px monospace';
+  ctx.textAlign = 'center'; ctx.fillText('E', W-110, H-100);
+}
+
+function drawIntro(){
+  ctx.fillStyle = 'rgba(2,10,16,0.9)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 4;
+  ctx.strokeRect(30, 24, W-60, H-48);
+  ctx.strokeStyle = '#5fd8f0'; ctx.lineWidth = 1;
+  ctx.strokeRect(40, 34, W-80, H-68);
+
+  ctx.font = 'bold 30px monospace'; ctx.fillStyle = '#e8b23a';
+  ctx.fillText('УНИВЕРСИТЕТ', W/2, 72);
+  ctx.font = 'bold 46px monospace'; ctx.fillStyle = '#5fd8f0';
+  ctx.fillText('«РЕМЕСЛО»', W/2, 118);
+  ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#c98a4b';
+  ctx.fillText('г. САМАРКАНД · ЗДАНИЕ В ФОРМЕ «67» · ЭКЗАМЕН КАЖДЫЙ ДЕНЬ', W/2, 146);
+
+  // Превью здания — форма 67
+  const pw = W - 160, ph = 240;
+  const px0 = 80, py0 = 165;
+  const s = Math.min(pw / GRID_W, ph / GRID_H);
+  const ox = px0 + (pw - GRID_W*s)/2;
+  const oy = py0 + (ph - GRID_H*s)/2;
+  for(let r=0;r<GRID_H;r++){
+    for(let c=0;c<GRID_W;c++){
+      if(!walkable[r][c]) continue;
+      ctx.fillStyle = isCourtyard[r][c] ? '#e8b23a' : '#5fd8f0';
+      ctx.fillRect(ox + c*s, oy + r*s, s-0.5, s-0.5);
+    }
+  }
+  // Рамка вокруг превью
+  ctx.strokeStyle = 'rgba(232,178,58,0.5)'; ctx.lineWidth = 2;
+  ctx.strokeRect(px0, py0, pw, ph);
+
+  ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#7ff0ff';
+  ctx.textAlign = 'left';
+  ctx.fillText('• КОРПУС «6» — ТАНДЫР И КУЛИНАРИЯ (левая цифра)', 40, 440);
+  ctx.fillText('• КОРПУС «7» — ПМИ (правая цифра)', 40, 462);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#c98a4b';
+  ctx.fillText('• Казан с пловом — во дворе «6»', W-40, 440);
+  ctx.fillText('• Мост между корпусами + Mini Cooper', W-40, 462);
+
+  const blink = Math.sin(T*4) > 0;
+  if(blink){
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 18px monospace'; ctx.fillStyle = '#5fd8f0';
+    ctx.fillText(isTouch ? 'КОСНИСЬ ЭКРАНА ЧТОБЫ НАЧАТЬ' : 'НАЖМИ [ПРОБЕЛ] ЧТОБЫ НАЧАТЬ', W/2, 505);
+  }
+}
+
+function drawDialogue(){
+  if(!dlg) return;
+  ctx.fillStyle = 'rgba(4,20,27,0.94)';
+  ctx.fillRect(50, H-180, W-100, 150);
+  ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 3;
+  ctx.strokeRect(50, H-180, W-100, 150);
+  ctx.strokeStyle = '#5fd8f0'; ctx.lineWidth = 1;
+  ctx.strokeRect(58, H-172, W-116, 134);
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 20px monospace'; ctx.fillStyle = '#e8b23a';
+  ctx.fillText(dlg.name, 78, H-142);
+  ctx.font = '17px monospace'; ctx.fillStyle = '#e8f6ff';
+  wrapText(dlg.lines[dlg.i], 78, H-108, W-160, 26);
+  ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#5fd8f0';
+  ctx.textAlign = 'right';
+  ctx.fillText(isTouch ? 'ТАП — далее  (' + (dlg.i+1) + '/' + dlg.lines.length + ')'
+                       : 'E / ПРОБЕЛ — далее  (' + (dlg.i+1) + '/' + dlg.lines.length + ')',
+               W-78, H-46);
+}
+
+function drawQuiz(){
+  ctx.fillStyle = 'rgba(2,10,16,0.94)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 3;
+  ctx.strokeRect(30, 20, W-60, H-40);
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#e8b23a';
+  ctx.fillText('ЭКЗАМЕН  ' + (qIndex+1) + ' / ' + quiz.length, W/2, 68);
+  ctx.font = 'bold 12px monospace'; ctx.fillStyle = '#c98a4b';
+  ctx.fillText('ПРАВИЛЬНО: ' + qCorrect + '   (нужно минимум 4)', W/2, 90);
+  ctx.font = 'bold 20px monospace'; ctx.fillStyle = '#e8f6ff';
+  ctx.fillText(quiz[qIndex].q, W/2, 150);
+  for(let i=0;i<3;i++){
+    const bx = W/2 - 320, by = 195 + i*76;
+    ctx.fillStyle = 'rgba(232,178,58,0.10)';
+    ctx.fillRect(bx, by, 640, 58);
+    ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 2;
+    ctx.strokeRect(bx, by, 640, 58);
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 19px monospace'; ctx.fillStyle = '#5fd8f0';
+    ctx.fillText(String(i+1), bx + 20, by + 37);
+    ctx.fillStyle = '#e8f6ff'; ctx.font = '18px monospace';
+    ctx.fillText(quiz[qIndex].a[i], bx + 58, by + 37);
+    ctx.textAlign = 'center';
+  }
+  if(quizMsg){
+    ctx.font = 'bold 20px monospace';
+    ctx.fillStyle = quizMsg.ok ? '#4ade80' : '#e74c3c';
+    ctx.fillText(quizMsg.text, W/2, H-55);
+  } else {
+    ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#c98a4b';
+    ctx.fillText(isTouch ? 'Коснись варианта ответа' : 'Нажми 1, 2 или 3', W/2, H-52);
+  }
+}
+
+function drawWin(){
+  ctx.fillStyle = 'rgba(2,10,16,0.92)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  for(let i=0;i<60;i++){
+    const x = ((i*137 + T*40) % (W+40)) - 20;
+    const y = ((i*211 + T*90) % (H+40)) - 20;
+    ctx.fillStyle = ['#e8b23a','#5fd8f0','#e74c3c','#4ade80','#c98a4b'][i%5];
+    ctx.fillRect(x, y, 5, 5);
+  }
+  ctx.strokeStyle = '#e8b23a'; ctx.lineWidth = 4;
+  ctx.strokeRect(30, 22, W-60, H-44);
+  ctx.font = 'bold 30px monospace'; ctx.fillStyle = '#e8b23a';
+  ctx.fillText('ТЫ ПРИНЯТ В УНИВЕРСИТЕТ МЕЧТЫ!', W/2, 72);
+  ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#5fd8f0';
+  ctx.fillText('«РЕМЕСЛО» · САМАРКАНД · ЗДАНИЕ-«67»', W/2, 104);
+  drawMiniCooper(W/2, 210, '#e8b23a', 0.95);
+  ctx.font = 'bold 18px monospace'; ctx.fillStyle = '#e8f6ff';
+  ctx.fillText('Алмазов собрано: ' + gotD + ' / 67', W/2, 310);
+  ctx.fillText('Чурчхелы съедено: ' + gotC, W/2, 336);
+  ctx.fillText('Экзамен сдан: ДА (а завтра — снова!)', W/2, 362);
+  ctx.font = 'bold 15px monospace'; ctx.fillStyle = '#c98a4b';
+  ctx.fillText('БРЫМДЫЩ привёл 67 студентов в «6» и 67 — в «7».', W/2, 400);
+  ctx.font = 'bold 16px monospace'; ctx.fillStyle = '#4ade80';
+  ctx.fillText('ФОРМА ЗДАНИЯ: 67 · ТЫ ВЫПУСКНИК!', W/2, 440);
+  const blink = Math.sin(T*4) > 0;
+  if(blink){
+    ctx.font = 'bold 16px monospace'; ctx.fillStyle = '#5fd8f0';
+    ctx.fillText(isTouch ? 'ТАП — НАЧАТЬ ЗАНОВО' : 'НАЖМИ [R] — НАЧАТЬ ЗАНОВО', W/2, 490);
+  }
+}
+
+/* ============ RENDER ============ */
+function render(){
+  ctx.fillStyle = '#020a10';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
+  drawWorldTiles();
+  drawKazan();
+  drawStands();
+  drawExamDesk();
+  drawPickups();
+  drawEntities();
+  ctx.restore();
+  drawHUD();
+  drawMinimap();
+  drawMobileControls();
+  if(state === 'intro')    drawIntro();
+  if(state === 'dialogue') drawDialogue();
+  if(state === 'quiz')     drawQuiz();
+  if(state === 'win')      drawWin();
+}
+
+/* ============ LOOP ============ */
+let last = 0;
+function loop(ts){
+  if(!last) last = ts;
+  let dt = (ts - last) / 16.6667;
+  last = ts;
+  dt = clamp(dt, 0.1, 2.5);
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+cam.x = clamp(player.x - W/2, 0, WW - W);
+cam.y = clamp(player.y - H/2, 0, WH - H);
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
