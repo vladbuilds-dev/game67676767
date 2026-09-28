@@ -20,6 +20,7 @@
 (() => {
 "use strict";
 
+/* ================= SETUP ================= */
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;
@@ -40,197 +41,253 @@ resize();
 addEventListener('resize', resize);
 addEventListener('orientationchange', ()=>setTimeout(resize, 100));
 
-/* ============ GRID WORLD: ФОРМА 67 ============ */
-const FONT_6 = ["01110","10001","10001","11110","10001","10001","01110"];
-const FONT_7 = ["11111","00001","00010","00100","01000","10000","10000"];
-const SCALE = 3, CELL = 60, GAP = 2;
-const DIGIT_W = 5 * SCALE;   // 15
-const DIGIT_H = 7 * SCALE;   // 21
-const GRID_W = DIGIT_W * 2 + GAP;  // 32
-const GRID_H = DIGIT_H;            // 21
-const WW = GRID_W * CELL;          // 1920
-const WH = GRID_H * CELL;          // 1260
+/* ================= WORLD ================= */
+// Чёткие пиксель-цифры 6 и 7
+const FONT_6 = [
+  "001110",
+  "011000",
+  "110000",
+  "111100",
+  "110011",
+  "110011",
+  "011110"
+];
+const FONT_7 = [
+  "111111",
+  "111111",
+  "000011",
+  "000011",
+  "000110",
+  "001100",
+  "011000"
+];
 
-const walkable = [];
-const isCourtyard = [];
+// Внутренний дворик в нижней петле «6» (пустые клетки шрифта)
+const COURTYARD_6 = [[4,2],[4,3],[5,2],[5,3]];
+
+const SCALE  = 6;
+const CELL   = 40;
+
+const DIGIT_W = 6 * SCALE;   // 36
+const DIGIT_H = 7 * SCALE;   // 42
+const GAP     = 16;          // улица
+const L_STRIP = 3;
+const T_STRIP = 6;
+const B_STRIP = 6;
+
+const OFFSET_6 = { c: L_STRIP,                  r: T_STRIP };
+const OFFSET_7 = { c: L_STRIP + DIGIT_W + GAP,  r: T_STRIP };
+
+const GRID_W = L_STRIP + DIGIT_W + GAP + DIGIT_W + L_STRIP;
+const GRID_H = T_STRIP + DIGIT_H + B_STRIP;
+const WW = GRID_W * CELL;
+const WH = GRID_H * CELL;
+
+const walkable  = [];
+const courtyard = [];
 for(let r=0;r<GRID_H;r++){
   walkable.push(new Array(GRID_W).fill(false));
-  isCourtyard.push(new Array(GRID_W).fill(false));
+  courtyard.push(new Array(GRID_W).fill(false));
 }
 
-function stamp(font, off){
+function stampDigit(font, off, courts){
   for(let fr=0;fr<font.length;fr++){
     for(let fc=0;fc<font[fr].length;fc++){
-      if(font[fr][fc] !== '1') continue;
+      const isWalk  = font[fr][fc] === '1';
+      const isCourt = courts.some(([r,c])=> r===fr && c===fc);
+      if(!isWalk && !isCourt) continue;
       for(let dr=0;dr<SCALE;dr++) for(let dc=0;dc<SCALE;dc++){
-        walkable[fr*SCALE+dr][off + fc*SCALE+dc] = true;
+        const r = off.r + fr*SCALE + dr;
+        const c = off.c + fc*SCALE + dc;
+        if(r<0||r>=GRID_H||c<0||c>=GRID_W) continue;
+        walkable[r][c] = true;
+        if(isCourt) courtyard[r][c] = true;
       }
     }
   }
 }
-stamp(FONT_6, 0);
-stamp(FONT_7, DIGIT_W + GAP);
+stampDigit(FONT_6, OFFSET_6, COURTYARD_6);
+stampDigit(FONT_7, OFFSET_7, []);
 
-// Дворы внутри петель «6» — проходимые
-for(let r=3;r<=8;r++)  for(let c=3;c<=11;c++){ walkable[r][c]=true; isCourtyard[r][c]=true; }
-for(let r=12;r<=17;r++)for(let c=3;c<=11;c++){ walkable[r][c]=true; isCourtyard[r][c]=true; }
+// Улица вокруг и между
+const GAP_C1 = L_STRIP + DIGIT_W;               // первый столбец улицы
+const GAP_C2 = L_STRIP + DIGIT_W + GAP - 1;     // последний столбец улицы
+for(let r=0;r<GRID_H;r++){
+  for(let c=0;c<GRID_W;c++){
+    if(walkable[r][c]) continue;
+    const inLeft   = c < L_STRIP;
+    const inRight  = c >= GRID_W - L_STRIP;
+    const inTop    = r < T_STRIP;
+    const inBottom = r >= GRID_H - B_STRIP;
+    const inGap    = c >= GAP_C1 && c <= GAP_C2;
+    if(inLeft || inRight || inTop || inBottom || inGap){
+      walkable[r][c] = true;
+    }
+  }
+}
 
-// Мост между «6» и «7» (средняя полка)
-for(let r=9;r<=11;r++) for(let c=12;c<=22;c++) walkable[r][c] = true;
+/* ================= КОЛЛИЗИЯ ================= */
+const KAZAN = { x: 21*CELL + 20, y: 36*CELL + 20, r: 90 };   // во дворике «6»
 
-/* ============ COLLISION ============ */
-function isWalkPx(px, py){
-  const c = Math.floor(px / CELL), r = Math.floor(py / CELL);
+const standPositions = [
+  { x: 12*CELL + 20, y: 42*CELL }, { x: 12*CELL + 20, y: 46*CELL },
+  { x: 30*CELL + 20, y: 42*CELL }, { x: 30*CELL + 20, y: 46*CELL }
+];
+
+function inWalkGrid(x, y){
+  const c = Math.floor(x/CELL), r = Math.floor(y/CELL);
   if(r<0||r>=GRID_H||c<0||c>=GRID_W) return false;
   return walkable[r][c];
 }
-const KAZAN = { x: 450, y: 330, r: 100 };
-const circles = [ KAZAN ];
-const stands = [
-  { x: 620, y: 450, r: 24 },
-  { x: 280, y: 900, r: 24 },
-  { x: 1500, y: 600, r: 24 },
-  { x: 1800, y: 180, r: 24 }
-];
-for(const s of stands) circles.push({ x:s.x, y:s.y, r:s.r });
-
 function boxFree(x, y){
   const hw = 7, hh = 6;
-  if(!isWalkPx(x-hw,y-hh)) return false;
-  if(!isWalkPx(x+hw,y-hh)) return false;
-  if(!isWalkPx(x-hw,y+hh)) return false;
-  if(!isWalkPx(x+hw,y+hh)) return false;
-  for(const c of circles){
-    if(Math.hypot(x-c.x, y-c.y) < c.r + 10) return false;
+  if(!inWalkGrid(x-hw, y-hh)) return false;
+  if(!inWalkGrid(x+hw, y-hh)) return false;
+  if(!inWalkGrid(x-hw, y+hh)) return false;
+  if(!inWalkGrid(x+hw, y+hh)) return false;
+  if(Math.hypot(x-KAZAN.x, y-KAZAN.y) < KAZAN.r + 8) return false;
+  for(const s of standPositions){
+    if(Math.hypot(x-s.x, y-s.y) < 26 + 8) return false;
   }
   return true;
 }
 
-/* ============ PICKUPS ============ */
-let seed = 67 * 6767;
+/* ================= PICKUPS ================= */
+let seed = 67*6767;
 function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; }
-function cellC(r, c){ return { x: c*CELL + CELL/2, y: r*CELL + CELL/2 }; }
+
+function randomWalkPoint(minDist, existing){
+  for(let i=0;i<900;i++){
+    const c = Math.floor(rnd()*GRID_W);
+    const r = Math.floor(rnd()*GRID_H);
+    if(!walkable[r][c]) continue;
+    const x = c*CELL + CELL/2, y = r*CELL + CELL/2;
+    if(Math.hypot(x-KAZAN.x, y-KAZAN.y) < KAZAN.r + 40) continue;
+    let ok = true;
+    for(const e of existing){
+      if(Math.hypot(e.x-x, e.y-y) < minDist){ ok = false; break; }
+    }
+    if(ok) return { x, y };
+  }
+  return null;
+}
 
 const diamonds = [];
-let tries = 0;
-while(diamonds.length < 67 && tries < 60000){
-  tries++;
-  const r = Math.floor(rnd()*GRID_H), c = Math.floor(rnd()*GRID_W);
-  if(!walkable[r][c]) continue;
-  const p = cellC(r, c);
-  if(Math.hypot(p.x - KAZAN.x, p.y - KAZAN.y) < KAZAN.r + 45) continue;
-  if(diamonds.some(d=>Math.hypot(d.x-p.x, d.y-p.y) < 55)) continue;
-  diamonds.push({ x:p.x, y:p.y, taken:false, ph: rnd()*6.283 });
+for(let i=0;i<67;i++){
+  const p = randomWalkPoint(60, diamonds);
+  if(p) diamonds.push({ x:p.x, y:p.y, taken:false, ph: rnd()*6.283 });
 }
 const churchelas = [];
-tries = 0;
-while(churchelas.length < 24 && tries < 60000){
-  tries++;
-  const r = Math.floor(rnd()*GRID_H), c = Math.floor(rnd()*GRID_W);
-  if(!walkable[r][c]) continue;
-  const p = cellC(r, c);
-  if(Math.hypot(p.x - KAZAN.x, p.y - KAZAN.y) < KAZAN.r + 45) continue;
-  if(diamonds.some(d=>Math.hypot(d.x-p.x, d.y-p.y) < 40)) continue;
-  if(churchelas.some(d=>Math.hypot(d.x-p.x, d.y-p.y) < 60)) continue;
-  churchelas.push({ x:p.x, y:p.y, taken:false, ph: rnd()*6.283 });
+for(let i=0;i<24;i++){
+  const p = randomWalkPoint(70, churchelas.concat(diamonds));
+  if(p) churchelas.push({ x:p.x, y:p.y, taken:false, ph: rnd()*6.283 });
 }
 
-/* ============ NPC ============ */
+/* ================= NPC ================= */
 const npcs = [
-  { id:'rector', name:'РЕКТОР МИХАИЛ ЛИТВИН', x:450, y:150, c:{
+  { id:'rector', name:'РЕКТОР МИХАИЛ ЛИТВИН',
+    x: 15*CELL + 20, y: 15*CELL + 20, c:{
       skin:'#f0c090', robe:'#243b55', belt:'#e8b23a', pants:'#1a2634',
       hat:'hair', hair:'#3a3a3a', glasses:true },
     lines:[
       'Добро пожаловать в «Ремесло», студент!',
-      'Само здание — цифра 67. Обойди его по коридорам.',
-      'Экзамен КАЖДЫЙ день. Каждому студенту — Мини Купер.',
-      'Собери 67 алмазов — и допуск к экзамену твой.'
+      'Мы внутри цифры «6». Второй корпус — цифра «7», через улицу.',
+      'Экзамен КАЖДЫЙ день. Каждому — Мини Купер.',
+      'Собери 67 алмазов — и экзамен твой.'
     ]},
-  { id:'ronaldo', name:'ФИЗРА — РОНАЛДО', x:150, y:900, c:{
+  { id:'ronaldo', name:'ФИЗРА — РОНАЛДО',
+    x: 6*CELL + 20, y: 33*CELL + 20, c:{
       skin:'#d9a06a', robe:'#f2f2f2', belt:'#2e86c1', pants:'#1a1a22',
       hat:'band', hair:'#2b1b12' },
     lines:[
       'СИУУУ! Я — учитель физры.',
-      'Бегаем 67 кругов по букве «6». Потом по «7».',
+      'Бегаем 67 кругов по букве «6», потом по «7».',
       'Кто не сдаст — чистит тандыр. Оба.',
-      'Алмазы не забудь, спортсмен!'
+      'Через улицу бегом, марш!'
     ]},
-  { id:'smile', name:'ЛИТЕРАТУРА — МИСТЕР СМАЙЛ', x:780, y:300, c:{
+  { id:'smile', name:'ЛИТЕРАТУРА — МИСТЕР СМАЙЛ',
+    x: 75*CELL + 20, y: 12*CELL + 20, c:{
       skin:'#ffe066', robe:'#7d3c98', belt:'#e8b23a', pants:'#2c1a3a',
       hat:'top', hair:'#111' },
     lines:[
       'Привет-привет! Улыбнись! :)',
-      'Сегодня сочинение: «Образ плова в архитектуре 67».',
-      'Не менее 67 страниц. И улыбка на лице!',
-      'Чурчхелу не забудь — она вдохновляет.'
+      'Добро пожаловать в корпус «7» — ПМИ!',
+      'Сочинение: «Образ плова в архитектуре 67».',
+      'Не менее 67 страниц!'
     ]},
-  { id:'beast', name:'МИСТЕР БИСТ — СТЕКЛОВАТА', x:1500, y:600, c:{
+  { id:'beast', name:'МИСТЕР БИСТ — СТЕКЛОВАТА',
+    x: 84*CELL + 20, y: 24*CELL + 20, c:{
       skin:'#e0a878', robe:'#1f6feb', belt:'#0d47a1', pants:'#161616',
       hat:'cap', hair:'#111' },
     lines:[
       'Я отвечаю за стекловату и шоколад.',
-      'Стекловатой утеплил всю шестёрку. И семёрку. И мост.',
+      'Стекловатой утеплил «6» и «7». И улицу между ними.',
       'У меня всё в шоколаде. АБСОЛЮТНО всё.',
       'Даже стены формы «67» — в шоколаде.'
     ]},
-  { id:'brym', name:'БРЫМДЫЩ — ГЛАВНЫЙ БОСС', x:1080, y:1080, c:{
+  { id:'brym', name:'БРЫМДЫЩ — ГЛАВНЫЙ БОСС',
+    x: 66*CELL + 20, y: 45*CELL + 20, c:{
       skin:'#c98a4b', robe:'#6c3483', belt:'#e8b23a', pants:'#241432',
       hat:'crown', hair:'#111', big:true },
     lines:[]},
-  { id:'t1', name:'УЧИТЕЛЬНИЦА', x:330, y:450, c:{
+  { id:'t1', name:'УЧИТЕЛЬНИЦА',
+    x: 21*CELL + 20, y: 21*CELL + 20, c:{
       skin:'#f5cba7', robe:'#ff6fa5', belt:'#e8b23a', pants:'#3a1f2e',
       hat:'hair', hair:'#4b2e1e' },
     lines:[
-      'Приветик! Мы внутри «6»!',
-      'У меня БРАСЛЕТЫ! Целых 67 штук.',
-      'Внутри петли — двор с казаном. Иди посмотри.'
+      'Приветик! Мы во дворике цифры «6»!',
+      'У меня 67 браслетов ручной работы. Все красивые!',
+      'Казан прямо тут, рядом — беги смотреть!'
     ]},
-  { id:'t2', name:'УЧИТЕЛЬНИЦА', x:600, y:450, c:{
+  { id:'t2', name:'УЧИТЕЛЬНИЦА',
+    x: 12*CELL + 20, y: 27*CELL + 20, c:{
       skin:'#f5cba7', robe:'#9b59b6', belt:'#e8b23a', pants:'#2c1a3a',
       hat:'hair', hair:'#e8b23a' },
     lines:[
       'Ой, новенький! Держи чурчхелу, она полезная.',
-      'Мост ведёт в «7». Там ПМИ.',
+      'Второй корпус — через улицу. Иди прямо и увидишь «7».',
       'Шучу. Всегда 67.'
     ]},
-  { id:'t3', name:'УЧИТЕЛЬНИЦА', x:450, y:900, c:{
+  { id:'t3', name:'УЧИТЕЛЬНИЦА',
+    x: 20*CELL + 20, y: 45*CELL + 20, c:{
       skin:'#f5cba7', robe:'#1abc9c', belt:'#e8b23a', pants:'#143a34',
       hat:'hair', hair:'#2b1b12' },
     lines:[
-      'Мой красавчик... ой, браслет! 67-й по счёту.',
-      'Внутри нижней петли «6» — столовая.',
-      'Кстати, алмазы блестят ярче, если собрать все 67.'
+      'Мой любимый браслет — 67-й в коллекции!',
+      'Улица между корпусами — самая красивая.',
+      'Алмазы блестят ярче, если собрать все 67.'
     ]},
-  { id:'t4', name:'УЧИТЕЛЬНИЦА', x:1650, y:390, c:{
+  { id:'t4', name:'УЧИТЕЛЬНИЦА',
+    x: 78*CELL + 20, y: 30*CELL + 20, c:{
       skin:'#f5cba7', robe:'#e74c3c', belt:'#e8b23a', pants:'#3a1a1a',
       hat:'hair', hair:'#111' },
     lines:[
       'Держи алмазик! Шучу, не держу. Ищи сам.',
-      'Ты идёшь по диагонали «7». Красиво, да?',
+      'Спускайся по диагонали «7» вниз — там Брымдыщ.',
       'Плов в казане — главный экспонат.'
     ]}
 ];
 
-/* ============ CARS / EXAM ============ */
+/* ================= CARS / EXAM ================= */
 const cars = [
-  { x: 330, y: 1170, color:'#c0392b' },
-  { x: 630, y: 1170, color:'#2e86c1' }
+  { x: 70*CELL + 20, y: 51*CELL + 20, color:'#c0392b' },
+  { x: 88*CELL + 20, y: 51*CELL + 20, color:'#2e86c1' }
 ];
-const EXAM = { x: 1050, y: 630 };
+const EXAM = { x: 24*CELL + 20, y: 8*CELL + 20 };
 
-/* ============ STATE ============ */
-const player = { x: 330, y: 450, speed: 3.1, anim: 0, dir: 1 };
+/* ================= STATE ================= */
+const player = { x: 20*CELL + 20, y: 15*CELL + 20, speed: 4.4, anim: 0, dir: 1 };
 const cam = { x: 0, y: 0 };
 let state = 'intro';
 let dlg = null;
 let gotD = 0, gotC = 0;
 let hasKey = false;
 
-/* ============ QUIZ ============ */
+/* ================= QUIZ ================= */
 const quizBase = [
   { q:'67 + 0 = ?', a:['67','76','670'], c:0 },
-  { q:'Какую форму имеет здание «Ремесла»?', a:['67','Квадрат','Круг'], c:0 },
-  { q:'Что получает каждый студент каждый день?', a:['Мини Купер','Кирпич','Ничего'], c:0 },
+  { q:'Какую форму имеют корпуса?', a:['Цифры 6 и 7','Квадрат','Круг'], c:0 },
+  { q:'Что получает студент каждый день?', a:['Мини Купер','Кирпич','Ничего'], c:0 },
   { q:'Кто отвечает за стекловату и шоколад?', a:['Мистер Бист','Роналдо','Мистер Смайл'], c:0 },
   { q:'Что варят в казане во дворе «6»?', a:['Плов','Стекловату','Бриллианты'], c:0 }
 ];
@@ -239,7 +296,10 @@ let quiz = [], qIndex = 0, qCorrect = 0, quizMsg = null, quizMsgT = 0;
 function startQuiz(){
   quiz = quizBase.map(it=>{
     const idx = it.a.map((t,i)=>({t,i}));
-    for(let i=idx.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [idx[i],idx[j]]=[idx[j],idx[i]]; }
+    for(let i=idx.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [idx[i],idx[j]] = [idx[j],idx[i]];
+    }
     return { q:it.q, a:idx.map(o=>o.t), c:idx.findIndex(o=>o.i===it.c) };
   });
   qIndex = 0; qCorrect = 0; quizMsg = null; quizMsgT = 0;
@@ -260,20 +320,20 @@ function nextQuestion(){
       cars.push({ x: Math.round(player.x)+90, y: Math.round(player.y)+30, color:'#e8b23a' });
       startDialogue({ name:'ЭКЗАМЕН СДАН!', lines:[
         'Ты сдал экзамен! (' + qCorrect + '/5)',
-        'Держи ключи от Мини Купера. Каждому студенту — по Куперу!',
-        'Теперь найди БРЫМДЫЩА в нижней части «7».'
+        'Держи ключи от Мини Купера!',
+        'Теперь найди БРЫМДЫЩА — внизу цифры «7».'
       ]});
     } else {
       startDialogue({ name:'ЭКЗАМЕН ПРОВАЛЕН', lines:[
         'Правильных: ' + qCorrect + '/5. Нужно минимум 4.',
-        'Не переживай — экзамен будет ЗАВТРА. И послезавтра.',
+        'Экзамен будет ЗАВТРА. И послезавтра.',
         'Подойди к столу и попробуй снова.'
       ]});
     }
   }
 }
 
-/* ============ DIALOGUE ============ */
+/* ================= DIALOGUE ================= */
 function startDialogue(npc){
   dlg = { name:npc.name, lines:npc.lines.slice(), i:0, onEnd:npc.onEnd||null };
   state = 'dialogue';
@@ -288,7 +348,7 @@ function advanceDialogue(){
   }
 }
 
-/* ============ INTERACT ============ */
+/* ================= INTERACT ================= */
 function interact(){
   let best = null, bd = 1e9;
   for(const n of npcs){
@@ -308,7 +368,7 @@ function interact(){
         startDialogue({ name:best.name, lines:[
           'АЛМАЗЫ: ' + gotD + '/67. ЭКЗАМЕН: СДАН. КУПЕР: ЕСТЬ.',
           'БРЫМДЫЩ ДОВОЛЕН.',
-          'Я привёл 67 студентов внутрь «6». И 67 — внутрь «7».',
+          'Я привёл 67 студентов в «6». И 67 — в «7».',
           'Добро пожаловать в Университет Мечты «РЕМЕСЛО»!'
         ], onEnd: ()=>{ state = 'win'; } });
       }
@@ -332,7 +392,7 @@ function interact(){
   }
 }
 
-/* ============ UPDATE ============ */
+/* ================= UPDATE ================= */
 const keys = {};
 function update(dt){
   T += dt/60;
@@ -375,7 +435,7 @@ function update(dt){
   }
 }
 
-/* ============ INPUT ============ */
+/* ================= INPUT ================= */
 addEventListener('keydown', e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
   if(!keys[e.code]) onPress(e.code);
@@ -397,7 +457,7 @@ function onPress(code){
   if(state === 'play'){ if(code === 'KeyE') interact(); }
 }
 
-/* ============ TOUCH ============ */
+/* ================= TOUCH ================= */
 const touchJoy = { active:false, id:null, baseX:0, baseY:0, dx:0, dy:0 };
 const touchBtn = { active:false, id:null };
 
@@ -462,7 +522,7 @@ function endTouch(e){
 cv.addEventListener('touchend', endTouch, {passive:false});
 cv.addEventListener('touchcancel', endTouch, {passive:false});
 
-/* ============ DRAW HELPERS ============ */
+/* ================= DRAW HELPERS ================= */
 function drawDiamondShape(x,y,s,ph){
   const glow = 0.5 + 0.5*Math.sin(T*3 + ph);
   ctx.save();
@@ -570,89 +630,112 @@ function drawPerson(x,y,c,walkAnim){
   }
 }
 
-/* ============ WORLD RENDER ============ */
-function drawWorldTiles(){
-  const c0 = Math.max(0, Math.floor(cam.x/CELL) - 1);
-  const c1 = Math.min(GRID_W-1, Math.ceil((cam.x+W)/CELL) + 1);
-  const r0 = Math.max(0, Math.floor(cam.y/CELL) - 1);
-  const r1 = Math.min(GRID_H-1, Math.ceil((cam.y+H)/CELL) + 1);
+/* ================= FLOOR TYPE ================= */
+function floorTypeAt(r, c){
+  if(courtyard[r][c]) return 'court6';
+  if(r >= OFFSET_6.r && r < OFFSET_6.r + DIGIT_H &&
+     c >= OFFSET_6.c && c < OFFSET_6.c + DIGIT_W) return 'b6';
+  if(r >= OFFSET_7.r && r < OFFSET_7.r + DIGIT_H &&
+     c >= OFFSET_7.c && c < OFFSET_7.c + DIGIT_W) return 'b7';
+  return 'street';
+}
+function isWallCell(r, c){
+  if(walkable[r][c]) return false;
+  if(r > 0 && walkable[r-1][c]) return true;
+  if(r < GRID_H-1 && walkable[r+1][c]) return true;
+  if(c > 0 && walkable[r][c-1]) return true;
+  if(c < GRID_W-1 && walkable[r][c+1]) return true;
+  return false;
+}
+
+/* ================= WORLD RENDER ================= */
+function drawWorld(){
+  const c0 = Math.max(0, Math.floor(cam.x / CELL) - 1);
+  const c1 = Math.min(GRID_W - 1, Math.ceil((cam.x + W) / CELL) + 1);
+  const r0 = Math.max(0, Math.floor(cam.y / CELL) - 1);
+  const r1 = Math.min(GRID_H - 1, Math.ceil((cam.y + H) / CELL) + 1);
 
   for(let r=r0;r<=r1;r++){
     for(let c=c0;c<=c1;c++){
       const x = c*CELL, y = r*CELL;
+      const type = floorTypeAt(r, c);
 
       if(walkable[r][c]){
         // Пол
-        const court = isCourtyard[r][c];
+        let col;
         const alt = (r+c)%2 === 0;
-        if(court){
-          ctx.fillStyle = alt ? '#3a2418' : '#331f14';
-        } else {
-          ctx.fillStyle = alt ? '#0f4152' : '#0c3846';
-        }
+        if(type === 'court6')      col = alt ? '#4a2a1a' : '#3f2314';
+        else if(type === 'b6')     col = alt ? '#b85a22' : '#a14e1b';
+        else if(type === 'b7')     col = alt ? '#255f7f' : '#1f506d';
+        else                       col = alt ? '#3a3a44' : '#32323c';
+        ctx.fillStyle = col;
         ctx.fillRect(x, y, CELL, CELL);
 
         // Узор
-        ctx.fillStyle = court ? 'rgba(232,178,58,0.13)' : 'rgba(95,216,240,0.10)';
+        if(type === 'b6' || type === 'court6'){
+          ctx.fillStyle = 'rgba(232,178,58,0.12)';
+        } else if(type === 'b7'){
+          ctx.fillStyle = 'rgba(95,216,240,0.12)';
+        } else {
+          ctx.fillStyle = 'rgba(255,255,255,0.05)';
+        }
         ctx.beginPath();
-        ctx.moveTo(x+CELL/2, y+10);
-        ctx.lineTo(x+CELL-10, y+CELL/2);
-        ctx.lineTo(x+CELL/2, y+CELL-10);
-        ctx.lineTo(x+10, y+CELL/2);
+        ctx.moveTo(x+CELL/2, y+8);
+        ctx.lineTo(x+CELL-8, y+CELL/2);
+        ctx.lineTo(x+CELL/2, y+CELL-8);
+        ctx.lineTo(x+8, y+CELL/2);
         ctx.closePath(); ctx.fill();
 
-        // Золотые точки по углам
-        ctx.fillStyle = court ? 'rgba(232,178,58,0.5)' : 'rgba(232,178,58,0.25)';
-        ctx.fillRect(x+4, y+4, 3, 3);
-        ctx.fillRect(x+CELL-7, y+4, 3, 3);
-        ctx.fillRect(x+4, y+CELL-7, 3, 3);
-        ctx.fillRect(x+CELL-7, y+CELL-7, 3, 3);
+        // Уголки
+        ctx.fillStyle = (type === 'b7') ? 'rgba(95,216,240,0.5)' : 'rgba(232,178,58,0.4)';
+        ctx.fillRect(x+3, y+3, 2, 2);
+        ctx.fillRect(x+CELL-5, y+3, 2, 2);
+        ctx.fillRect(x+3, y+CELL-5, 2, 2);
+        ctx.fillRect(x+CELL-5, y+CELL-5, 2, 2);
+      } else if(isWallCell(r, c)){
+        // Стена
+        ctx.fillStyle = '#0a1a22';
+        ctx.fillRect(x, y, CELL, CELL);
 
-        // Рамка вокруг ячейки — тонкая
-        ctx.strokeStyle = court ? 'rgba(232,178,58,0.12)' : 'rgba(95,216,240,0.06)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x+0.5, y+0.5, CELL-1, CELL-1);
+        // Кирпичная текстура
+        ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        ctx.fillRect(x+2, y+CELL/2, CELL-4, 2);
+        ctx.fillRect(x+CELL/2, y+2, 2, CELL/2-2);
+        ctx.fillRect(x+CELL/4, y+CELL/2+2, 2, CELL/2-2);
 
+        // Золотая кромка по сторонам, обращённым к полу
+        const TT = 6;
+        ctx.fillStyle = '#e8b23a';
+        if(r > 0 && walkable[r-1][c]) ctx.fillRect(x, y, CELL, TT);
+        if(r < GRID_H-1 && walkable[r+1][c]) ctx.fillRect(x, y+CELL-TT, CELL, TT);
+        if(c > 0 && walkable[r][c-1]) ctx.fillRect(x, y, TT, CELL);
+        if(c < GRID_W-1 && walkable[r][c+1]) ctx.fillRect(x+CELL-TT, y, TT, CELL);
+
+        // Тёмный угол
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(x, y+CELL-3, CELL, 3);
       } else {
-        // Стена или пустота
-        let isWall = false;
-        if(r>0 && walkable[r-1][c]) isWall = true;
-        if(r<GRID_H-1 && walkable[r+1][c]) isWall = true;
-        if(c>0 && walkable[r][c-1]) isWall = true;
-        if(c<GRID_W-1 && walkable[r][c+1]) isWall = true;
-
-        if(isWall){
-          // Стена
-          ctx.fillStyle = '#061820';
-          ctx.fillRect(x, y, CELL, CELL);
-          // Кирпичная текстура
-          ctx.fillStyle = 'rgba(255,255,255,0.025)';
-          ctx.fillRect(x, y, CELL, 2);
-          ctx.fillRect(x+2, y+CELL/2, CELL-4, 2);
-
-          // Золотая кромка на сторонах, обращённых к полу
-          const TT = 5;
-          ctx.fillStyle = '#e8b23a';
-          if(r>0 && walkable[r-1][c]) ctx.fillRect(x, y, CELL, TT);
-          if(r<GRID_H-1 && walkable[r+1][c]) ctx.fillRect(x, y+CELL-TT, CELL, TT);
-          if(c>0 && walkable[r][c-1]) ctx.fillRect(x, y, TT, CELL);
-          if(c<GRID_W-1 && walkable[r][c+1]) ctx.fillRect(x+CELL-TT, y, TT, CELL);
-
-          // Внутренний блик
-          ctx.fillStyle = 'rgba(232,178,58,0.15)';
-          if(r>0 && walkable[r-1][c]) ctx.fillRect(x, y+TT, CELL, 3);
-          if(c>0 && walkable[r][c-1]) ctx.fillRect(x+TT, y, 3, CELL);
-        } else {
-          // Пустота (внешняя)
-          ctx.fillStyle = '#020a10';
-          ctx.fillRect(x, y, CELL, CELL);
-        }
+        // Внешняя пустота
+        ctx.fillStyle = '#020a10';
+        ctx.fillRect(x, y, CELL, CELL);
       }
     }
   }
+
+  // Большая цифра «6» на полу внутри «6»
+  ctx.textAlign = 'center';
+  ctx.font = 'bold ' + (DIGIT_W * CELL * 0.55) + 'px monospace';
+  ctx.fillStyle = 'rgba(232,178,58,0.10)';
+  ctx.fillText('6',
+    (OFFSET_6.c + DIGIT_W/2) * CELL,
+    (OFFSET_6.r + DIGIT_H/2) * CELL + 30);
+  ctx.fillStyle = 'rgba(95,216,240,0.10)';
+  ctx.fillText('7',
+    (OFFSET_7.c + DIGIT_W/2) * CELL,
+    (OFFSET_7.r + DIGIT_H/2) * CELL + 30);
 }
 
-/* --- плов в казане --- */
+/* ================= KAZAN ================= */
 const plovDots = [];
 for(let i=0;i<150;i++){
   const a = rnd()*Math.PI*2, r = Math.sqrt(rnd());
@@ -662,74 +745,76 @@ for(let i=0;i<150;i++){
     c: rr < 0.45 ? '#d97b2a' : (rr < 0.7 ? '#8a4a1e' : '#f7e9b8')
   });
 }
-
 function drawKazan(){
   const cx = KAZAN.x, cy = KAZAN.y;
-  const g = ctx.createRadialGradient(cx, cy, 20, cx, cy, 220);
+  const g = ctx.createRadialGradient(cx, cy, 20, cx, cy, 200);
   g.addColorStop(0, 'rgba(255,160,60,0.22)');
   g.addColorStop(1, 'rgba(255,160,60,0)');
   ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(cx, cy, 220, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, 200, 0, 7); ctx.fill();
 
   ctx.fillStyle = '#2b2b33';
-  ctx.fillRect(cx-72, cy+56, 22, 34); ctx.fillRect(cx+50, cy+56, 22, 34);
+  ctx.fillRect(cx-62, cy+46, 20, 30);
+  ctx.fillRect(cx+42, cy+46, 20, 30);
   ctx.fillStyle = '#1a1a20';
-  ctx.beginPath(); ctx.ellipse(cx, cy+92, 100, 15, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx, cy+78, 88, 13, 0, 0, 7); ctx.fill();
 
   ctx.fillStyle = '#17171c';
   ctx.beginPath();
-  ctx.moveTo(cx-92, cy-42);
-  ctx.quadraticCurveTo(cx-100, cy+52, cx-54, cy+72);
-  ctx.lineTo(cx+54, cy+72);
-  ctx.quadraticCurveTo(cx+100, cy+52, cx+92, cy-42);
+  ctx.moveTo(cx-80, cy-36);
+  ctx.quadraticCurveTo(cx-86, cy+44, cx-48, cy+62);
+  ctx.lineTo(cx+48, cy+62);
+  ctx.quadraticCurveTo(cx+86, cy+44, cx+80, cy-36);
   ctx.closePath(); ctx.fill();
 
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
-  ctx.fillRect(cx-72, cy-28, 8, 74); ctx.fillRect(cx+58, cy-28, 5, 64);
+  ctx.fillRect(cx-62, cy-24, 7, 64);
+  ctx.fillRect(cx+50, cy-24, 5, 56);
 
   ctx.fillStyle = '#e8b23a';
-  ctx.beginPath(); ctx.ellipse(cx, cy-42, 94, 30, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx, cy-36, 82, 26, 0, 0, 7); ctx.fill();
   ctx.fillStyle = '#9c6f1f';
-  ctx.beginPath(); ctx.ellipse(cx, cy-40, 86, 25, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx, cy-34, 75, 21, 0, 0, 7); ctx.fill();
 
   ctx.fillStyle = '#e8c470';
-  ctx.beginPath(); ctx.ellipse(cx, cy-42, 82, 23, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx, cy-36, 71, 19, 0, 0, 7); ctx.fill();
   for(const d of plovDots){
     ctx.fillStyle = d.c;
-    ctx.fillRect(cx + d.x - 3, cy - 42 + d.y - 2, 6, 4);
+    ctx.fillRect(cx + d.x - 3, cy - 36 + d.y - 2, 6, 4);
   }
 
   ctx.textAlign = 'center';
-  ctx.font = 'bold 24px monospace';
+  ctx.font = 'bold 22px monospace';
   ctx.fillStyle = 'rgba(232,178,58,0.85)';
-  ctx.fillText('67', cx, cy + 36);
+  ctx.fillText('67', cx, cy + 30);
 
   for(let i=0;i<12;i++){
     const p = (T*0.32 + i*0.083) % 1;
-    const y = cy - 52 - p*140;
-    const x = cx + Math.sin(T*1.4 + i*2.1) * 32 * (0.4 + p);
-    const r = 10 + p*26;
+    const y = cy - 44 - p*130;
+    const x = cx + Math.sin(T*1.4 + i*2.1) * 28 * (0.4 + p);
+    const r = 9 + p*22;
     ctx.globalAlpha = (1-p) * 0.20;
     ctx.fillStyle = '#ffffff';
     ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
   }
   ctx.globalAlpha = 1;
 
-  for(let i=0;i<7;i++){
-    const a = -1.1 + i*0.37;
-    const bx = cx + Math.cos(a)*96;
-    const by = cy - 42 + Math.sin(a)*30;
+  for(let i=0;i<6;i++){
+    const a = -1.0 + i*0.4;
+    const bx = cx + Math.cos(a)*84;
+    const by = cy - 36 + Math.sin(a)*26;
     ctx.strokeStyle = '#5c3f22'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx, by+24); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx, by+22); ctx.stroke();
     for(let j=0;j<4;j++){
       ctx.fillStyle = j%2 ? '#8a5a2b' : '#6d431d';
-      ctx.beginPath(); ctx.arc(bx, by+7+j*6, 4, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(bx, by+6+j*5, 3.5, 0, 7); ctx.fill();
     }
   }
 }
 
+/* ================= STANDS ================= */
 function drawStands(){
-  for(const s of stands){
+  for(const s of standPositions){
     const x = s.x - 35, y = s.y - 25;
     ctx.fillStyle = '#5c3f22';
     ctx.fillRect(x, y+28, 70, 22);
@@ -752,10 +837,11 @@ function drawStands(){
         ctx.beginPath(); ctx.arc(bx-1.3, y-5.3+j*6.5, 1.6, 0, 7); ctx.fill();
       }
     }
-    drawDiamondShape(x+58, y+16, 7, x);
+    drawDiamondShape(x+58, y+16, 6, x);
   }
 }
 
+/* ================= CARS ================= */
 function drawMiniCooper(cx, cy, color, scale){
   ctx.save(); ctx.translate(cx, cy); ctx.scale(scale, scale);
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
@@ -768,9 +854,8 @@ function drawMiniCooper(cx, cy, color, scale){
   ctx.fillStyle = '#fff2a8';
   ctx.fillRect(52, -10, 8, 9); ctx.fillRect(-60, -10, 8, 9);
   ctx.fillStyle = '#111'; ctx.fillRect(-14, 2, 28, 12);
-  ctx.fillStyle = '#e8b23a';
-  ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
-  ctx.fillText('67', 0, 12);
+  ctx.fillStyle = '#e8b23a'; ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center'; ctx.fillText('67', 0, 12);
   ctx.fillStyle = '#111';
   ctx.beginPath(); ctx.arc(-32, 20, 13, 0, 7); ctx.fill();
   ctx.beginPath(); ctx.arc(32, 20, 13, 0, 7); ctx.fill();
@@ -780,6 +865,7 @@ function drawMiniCooper(cx, cy, color, scale){
   ctx.restore();
 }
 
+/* ================= EXAM ================= */
 function drawExamDesk(){
   const x = EXAM.x - 50, y = EXAM.y - 10;
   ctx.fillStyle = '#5c3f22';
@@ -801,6 +887,7 @@ function drawExamDesk(){
   ctx.fillText('КАЖДЫЙ ДЕНЬ', x+50, y-2);
 }
 
+/* ================= ENTITIES ================= */
 function drawEntities(){
   const list = [];
   for(const c of cars) list.push({ y:c.y, draw: ()=> drawMiniCooper(c.x, c.y, c.color, 0.55) });
@@ -844,9 +931,9 @@ function drawPickups(){
   }
 }
 
-/* ============ MINIMAP ============ */
+/* ================= MINIMAP ================= */
 function drawMinimap(){
-  const mw = 180, mh = 118;
+  const mw = 170, mh = 112;
   const mx = W - mw - 12, my = 12;
   ctx.fillStyle = 'rgba(4,20,27,0.9)';
   ctx.fillRect(mx, my, mw, mh);
@@ -857,28 +944,31 @@ function drawMinimap(){
   for(let r=0;r<GRID_H;r++){
     for(let c=0;c<GRID_W;c++){
       if(!walkable[r][c]) continue;
-      ctx.fillStyle = isCourtyard[r][c] ? '#e8b23a' : '#5fd8f0';
-      ctx.fillRect(mx + c*sx, my + r*sy, sx, sy);
+      const t = floorTypeAt(r,c);
+      if(t === 'b6')          ctx.fillStyle = '#c96a2b';
+      else if(t === 'court6') ctx.fillStyle = '#e8b23a';
+      else if(t === 'b7')     ctx.fillStyle = '#5fd8f0';
+      else                    ctx.fillStyle = '#5a5a66';
+      ctx.fillRect(mx + c*sx, my + r*sy, Math.max(1, sx), Math.max(1, sy));
     }
-  }
-
-  // NPC
-  ctx.fillStyle = '#e74c3c';
-  for(const n of npcs){
-    ctx.fillRect(mx + (n.x/WW)*mw - 1.5, my + (n.y/WH)*mh - 1.5, 3, 3);
   }
   // Казан
   ctx.fillStyle = '#fff2a8';
   ctx.fillRect(mx + (KAZAN.x/WW)*mw - 2, my + (KAZAN.y/WH)*mh - 2, 4, 4);
+  // NPC
+  ctx.fillStyle = '#e74c3c';
+  for(const n of npcs){
+    ctx.fillRect(mx + (n.x/WW)*mw - 1, my + (n.y/WH)*mh - 1, 2, 2);
+  }
   // Игрок
   const px = mx + (player.x/WW)*mw, py = my + (player.y/WH)*mh;
   ctx.fillStyle = '#4ade80';
-  ctx.fillRect(px-2.5, py-2.5, 5, 5);
+  ctx.fillRect(px-2, py-2, 4, 4);
   ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-  ctx.strokeRect(px-2.5, py-2.5, 5, 5);
+  ctx.strokeRect(px-2, py-2, 4, 4);
 }
 
-/* ============ UI ============ */
+/* ================= UI ================= */
 function wrapText(text, x, y, maxW, lh){
   const words = text.split(' ');
   let line = '', yy = y;
@@ -910,7 +1000,7 @@ function drawHUD(){
     ctx.textAlign = 'center';
     ctx.font = 'bold 12px monospace';
     ctx.fillStyle = 'rgba(232,178,58,0.75)';
-    ctx.fillText('WASD — идти · E — говорить · Здание «67» — обойди по коридорам', W/2, H-14);
+    ctx.fillText('WASD — идти · E — говорить · Два корпуса в форме 6 и 7', W/2, H-14);
   }
 
   if(state === 'play'){
@@ -964,43 +1054,48 @@ function drawIntro(){
   ctx.strokeRect(40, 34, W-80, H-68);
 
   ctx.font = 'bold 30px monospace'; ctx.fillStyle = '#e8b23a';
-  ctx.fillText('УНИВЕРСИТЕТ', W/2, 72);
+  ctx.fillText('УНИВЕРСИТЕТ', W/2, 68);
   ctx.font = 'bold 46px monospace'; ctx.fillStyle = '#5fd8f0';
-  ctx.fillText('«РЕМЕСЛО»', W/2, 118);
-  ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#c98a4b';
-  ctx.fillText('г. САМАРКАНД · ЗДАНИЕ В ФОРМЕ «67» · ЭКЗАМЕН КАЖДЫЙ ДЕНЬ', W/2, 146);
+  ctx.fillText('«РЕМЕСЛО»', W/2, 112);
+  ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#c98a4b';
+  ctx.fillText('г. САМАРКАНД · ДВА КОРПУСА В ФОРМЕ ЦИФР 6 И 7', W/2, 138);
 
-  // Превью здания — форма 67
-  const pw = W - 160, ph = 240;
-  const px0 = 80, py0 = 165;
+  // Превью: две цифры
+  const pw = W - 100, ph = 220;
+  const px0 = 50, py0 = 155;
   const s = Math.min(pw / GRID_W, ph / GRID_H);
   const ox = px0 + (pw - GRID_W*s)/2;
   const oy = py0 + (ph - GRID_H*s)/2;
+  ctx.fillStyle = '#031015';
+  ctx.fillRect(px0, py0, pw, ph);
   for(let r=0;r<GRID_H;r++){
     for(let c=0;c<GRID_W;c++){
       if(!walkable[r][c]) continue;
-      ctx.fillStyle = isCourtyard[r][c] ? '#e8b23a' : '#5fd8f0';
-      ctx.fillRect(ox + c*s, oy + r*s, s-0.5, s-0.5);
+      const t = floorTypeAt(r,c);
+      if(t === 'b6')          ctx.fillStyle = '#c96a2b';
+      else if(t === 'court6') ctx.fillStyle = '#e8b23a';
+      else if(t === 'b7')     ctx.fillStyle = '#5fd8f0';
+      else                    ctx.fillStyle = '#3a3a44';
+      ctx.fillRect(ox + c*s, oy + r*s, Math.max(1, s), Math.max(1, s));
     }
   }
-  // Рамка вокруг превью
   ctx.strokeStyle = 'rgba(232,178,58,0.5)'; ctx.lineWidth = 2;
   ctx.strokeRect(px0, py0, pw, ph);
 
   ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#7ff0ff';
   ctx.textAlign = 'left';
-  ctx.fillText('• КОРПУС «6» — ТАНДЫР И КУЛИНАРИЯ (левая цифра)', 40, 440);
-  ctx.fillText('• КОРПУС «7» — ПМИ (правая цифра)', 40, 462);
+  ctx.fillText('• КОРПУС «6» — ТАНДЫР, КУЛИНАРИЯ, КАЗАН, ДВОРИК', 40, 408);
+  ctx.fillText('• КОРПУС «7» — ПМИ, БРЫМДЫЩ, СТЕКЛОВАТА', 40, 430);
   ctx.textAlign = 'right';
   ctx.fillStyle = '#c98a4b';
-  ctx.fillText('• Казан с пловом — во дворе «6»', W-40, 440);
-  ctx.fillText('• Мост между корпусами + Mini Cooper', W-40, 462);
+  ctx.fillText('• УЛИЦА МЕЖДУ КОРПУСАМИ — ХОДИ СВОБОДНО', W-40, 408);
+  ctx.fillText('• ВНУТРИ КАЖДОЙ ЦИФРЫ ЕСТЬ ПРОХОДЫ', W-40, 430);
 
   const blink = Math.sin(T*4) > 0;
   if(blink){
     ctx.textAlign = 'center';
     ctx.font = 'bold 18px monospace'; ctx.fillStyle = '#5fd8f0';
-    ctx.fillText(isTouch ? 'КОСНИСЬ ЭКРАНА ЧТОБЫ НАЧАТЬ' : 'НАЖМИ [ПРОБЕЛ] ЧТОБЫ НАЧАТЬ', W/2, 505);
+    ctx.fillText(isTouch ? 'КОСНИСЬ ЭКРАНА ЧТОБЫ НАЧАТЬ' : 'НАЖМИ [ПРОБЕЛ] ЧТОБЫ НАЧАТЬ', W/2, 490);
   }
 }
 
@@ -1074,16 +1169,16 @@ function drawWin(){
   ctx.font = 'bold 30px monospace'; ctx.fillStyle = '#e8b23a';
   ctx.fillText('ТЫ ПРИНЯТ В УНИВЕРСИТЕТ МЕЧТЫ!', W/2, 72);
   ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#5fd8f0';
-  ctx.fillText('«РЕМЕСЛО» · САМАРКАНД · ЗДАНИЕ-«67»', W/2, 104);
+  ctx.fillText('«РЕМЕСЛО» · САМАРКАНД · КОРПУСА 6 И 7', W/2, 104);
   drawMiniCooper(W/2, 210, '#e8b23a', 0.95);
   ctx.font = 'bold 18px monospace'; ctx.fillStyle = '#e8f6ff';
   ctx.fillText('Алмазов собрано: ' + gotD + ' / 67', W/2, 310);
   ctx.fillText('Чурчхелы съедено: ' + gotC, W/2, 336);
   ctx.fillText('Экзамен сдан: ДА (а завтра — снова!)', W/2, 362);
   ctx.font = 'bold 15px monospace'; ctx.fillStyle = '#c98a4b';
-  ctx.fillText('БРЫМДЫЩ привёл 67 студентов в «6» и 67 — в «7».', W/2, 400);
+  ctx.fillText('БРЫМДЫЩ привёл 67 студентов в «6». И 67 — в «7».', W/2, 400);
   ctx.font = 'bold 16px monospace'; ctx.fillStyle = '#4ade80';
-  ctx.fillText('ФОРМА ЗДАНИЯ: 67 · ТЫ ВЫПУСКНИК!', W/2, 440);
+  ctx.fillText('ФОРМА ЗДАНИЯ: 6 И 7 · ТЫ ВЫПУСКНИК!', W/2, 440);
   const blink = Math.sin(T*4) > 0;
   if(blink){
     ctx.font = 'bold 16px monospace'; ctx.fillStyle = '#5fd8f0';
@@ -1091,13 +1186,13 @@ function drawWin(){
   }
 }
 
-/* ============ RENDER ============ */
+/* ================= RENDER ================= */
 function render(){
   ctx.fillStyle = '#020a10';
   ctx.fillRect(0, 0, W, H);
   ctx.save();
   ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
-  drawWorldTiles();
+  drawWorld();
   drawKazan();
   drawStands();
   drawExamDesk();
@@ -1113,7 +1208,7 @@ function render(){
   if(state === 'win')      drawWin();
 }
 
-/* ============ LOOP ============ */
+/* ================= LOOP ================= */
 let last = 0;
 function loop(ts){
   if(!last) last = ts;
